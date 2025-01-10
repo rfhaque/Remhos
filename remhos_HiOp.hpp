@@ -60,17 +60,18 @@ public:
       ParGridFunction x_interpolated(&fespace); x_interpolated.SetFromTrueDofs(x);
       subtract( x_interpolated, x_initial, x_diff);
 
+      // L2 norm (0.5*(u_1-u_0)^2)
       ParLinearForm dQdeta(&fespace);
       GridFunctionCoefficient x_diff_coeff(&x_diff);
       ProductCoefficient x_diff_coeffsquared(x_diff_coeff, x_diff_coeff);
       ProductCoefficient half_x_diff_coeffsquared(0.5, x_diff_coeffsquared);
 
-	   	GradientGridFunctionCoefficient GradientCoeff_new(&x_interpolated);
-      	GradientGridFunctionCoefficient GradientCoeff_old(&x_initial);
+      // H1-semi norm ((\nable u_1 - \nabla u_0)^2)
+	   GradientGridFunctionCoefficient GradientCoeff_new(&x_interpolated);
+      GradientGridFunctionCoefficient GradientCoeff_old(&x_initial);
       VectorSumCoefficient new_minus_old_coeff(GradientCoeff_new, GradientCoeff_old, 1.0, -1.0);
 
       InnerProductCoefficient innerProductCoeff(new_minus_old_coeff,new_minus_old_coeff);
-
       ProductCoefficient H1SemiNormCoeff(H1semiNormweight_, innerProductCoeff);
 
       auto *lfi_1 = new DomainLFIntegrator(half_x_diff_coeffsquared);
@@ -188,6 +189,158 @@ private:
                   g.ParFESpace()->GetComm());
       return mass;
    }
+   
+};
+
+class RhemosQuadHiOpProblem : public OptimizationProblem
+{
+private:
+   const QuadratureFunction x_initial;
+   const ParGridFunction pos_final;
+   QuadratureSpace & qspace;
+   const QuadratureFunction & designVar;
+   Vector d_lo, d_hi, massvec;
+
+   double targetMass;
+   double H1semiNormweight_;
+
+public:
+   RhemosQuadHiOpProblem(QuadratureSpace &space,
+                     const ParGridFunction &pos_final_,
+                     const QuadratureFunction &u_initial,
+                     const QuadratureFunction &design_Var,
+                     const Vector &xmin, 
+                     const Vector &xmax, 
+                     double initalmass,
+                     int numConstraints_,
+                     double H1semiNormweight)
+      : OptimizationProblem(design_Var.Size(), NULL, NULL),
+        x_initial(u_initial), pos_final(pos_final_), qspace(space), designVar(design_Var),
+        d_lo(numConstraints_), d_hi(numConstraints_), massvec(numConstraints_), targetMass(initalmass), H1semiNormweight_(H1semiNormweight)
+   {
+
+      numConstraints = numConstraints_;
+      SetEqualityConstraint(massvec);
+      // SetInequalityConstraint(d_lo, d_hi);
+
+      SetSolutionBounds(xmin, xmax);
+   }
+
+   virtual double CalcObjective(const Vector &x) const
+   {
+      QuadratureFunction x_diff(&qspace); x_diff = 0.0;
+      subtract( x, x_initial, x_diff);
+
+      real_t norm = x_diff.Norml2();
+
+      return 0.5 * norm * norm;
+   }
+
+   virtual void CalcObjectiveGrad(const Vector &x, Vector &grad) const
+   {
+      QuadratureFunction x_diff(&qspace); x_diff = 0.0;
+      subtract( x, x_initial, x_diff);
+
+      grad = x_diff;
+   }
+
+   virtual void CalcConstraintGrad(const int constNumber, const Vector &x, Vector &grad) const
+   {
+      if( constNumber == 0)
+      {
+         grad = 0.0;
+         auto mesh = qspace.GetMesh();
+         const int NE = mesh->GetNE();
+
+         Array<int> offset(NE+1);
+         offset[0] = 0;
+
+         for (int e = 0; e < NE; e++)
+         {            
+            const IntegrationRule &ir = qspace.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
+
+            offset[e+1] = offset[e] + nqp;
+         }
+
+         for (int e = 0; e < NE; e++)
+         {
+            const int s_offset = offset[e];
+
+            IsoparametricTransformation Tr;
+            mesh->GetElementTransformation(e, pos_final, &Tr);
+
+            const IntegrationRule &ir = qspace.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
+
+            for (int q = 0; q < nqp; q++)
+            {
+               const IntegrationPoint &ip = ir.IntPoint(q);
+               Tr.SetIntPoint(&ip);
+
+               grad[s_offset+q] = Tr.Weight() * ip.weight;
+            }
+         }
+      }
+   }
+
+   virtual void CalcConstraint(const int constNumber, const Vector &x, Vector &constVal) const
+   {
+      if( constNumber == 0)
+      {
+         QuadratureFunction u_desing(qspace);
+         u_desing =  x;
+
+         double mass_s = Integrate(pos_final, &u_desing, nullptr, nullptr);
+
+         constVal[0] = mass_s - targetMass;
+      }
+   }
+
+private:
+
+double Integrate(const Vector &pos,
+                 const QuadratureFunction *q1,
+                 const QuadratureFunction *q2,
+                 const ParGridFunction *g1) const
+{
+   MFEM_VERIFY(q1 || q2 || g1, "At least one function must be specified.");
+
+   const QuadratureSpace *qspace = nullptr;
+   if (q1) { qspace = dynamic_cast<const QuadratureSpace *>(q1->GetSpace()); }
+   if (q2) { qspace = dynamic_cast<const QuadratureSpace *>(q2->GetSpace()); }
+
+   auto mesh = (qspace) ? qspace->GetMesh() : g1->ParFESpace()->GetMesh();
+   const int NE = mesh->GetNE();
+   double integral = 0.0;
+   for (int e = 0; e < NE; e++)
+   {
+      const IntegrationRule &ir =
+          (qspace) ? qspace->GetElementIntRule(e)
+                   : IntRules.Get(g1->ParFESpace()->GetFE(e)->GetGeomType(), 7);
+      const int nqp = ir.GetNPoints();
+
+      // Transformation w.r.t. the given mesh positions.
+      IsoparametricTransformation Tr;
+      mesh->GetElementTransformation(e, pos, &Tr);
+
+      Vector q1_vals(nqp), q2_vals(nqp), g1_vals(nqp);
+      if (q1) { q1->GetValues(e, q1_vals); } else { q1_vals = 1.0; }
+      if (q2) { q2->GetValues(e, q2_vals); } else { q2_vals = 1.0; }
+      if (g1) { g1->GetValues(Tr, ir, g1_vals); } else { g1_vals = 1.0; }
+
+      for (int q = 0; q < nqp; q++)
+      {
+         const IntegrationPoint &ip = ir.IntPoint(q);
+         Tr.SetIntPoint(&ip);
+         integral += Tr.Weight() * ip.weight *
+                     q1_vals(q) * q2_vals(q) * g1_vals(q);
+      }
+   }
+   MPI_Allreduce(MPI_IN_PLACE, &integral, 1, MPI_DOUBLE, MPI_SUM,
+                 MPI_COMM_WORLD);
+   return integral;
+}
    
 };
 
