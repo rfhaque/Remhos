@@ -241,24 +241,16 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    finder.Setup(pmesh_lor);
    finder.Interpolate(pos_quad_final, u_0_lor, u);
 
-
-   QuadratureFunction u_desing(u.GetSpace());
-   QuadratureFunction u_initial(u.GetSpace());
-   u_desing = u;
-   u_initial = u;
-
-
    // Report mass error.
    const double mass_0 = Integrate(*pmesh_init.GetNodes(), &u_0,
-                                   nullptr, nullptr),
-                mass_f = Integrate(pos_final, &u,
                                    nullptr, nullptr);
+   double mass_f = Integrate(pos_final, &u, nullptr, nullptr);
    if (pmesh_init.GetMyRank() == 0)
    {
       std::cout << "Mass initial: " << mass_0 << std::endl
                 << "Mass final  : " << mass_f << std::endl
-                << "Mass diff  : " << fabs(mass_0 - mass_f) << endl
-                << "Mass diff %: " << fabs(mass_0 - mass_f)/mass_0*100 << endl;
+                << "Mass diff   : " << fabs(mass_0 - mass_f) << endl
+                << "Mass diff % : " << fabs(mass_0 - mass_f)/mass_0*100 << endl;
    }
 
    // Compute min / max bounds.
@@ -270,18 +262,14 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       gf_min = u_min, gf_max = u_max;
 
       *x = pos_final;
-
       VisQuadratureFunction(pmesh_init, gf_min, "u_min QF", 0, 500);
       VisQuadratureFunction(pmesh_init, gf_max, "u_max QF", 400, 500);
-
       *x = pos_init;
    }
 
    // Optimize u here.
-   // ...
-   if(true)
+   QuadratureFunction u_desing(u), u_initial(u);
    {
-      *x = pos_final;
       OptimizationSolver* optsolver = NULL;
       {
 #ifdef MFEM_USE_HIOP
@@ -294,21 +282,16 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
 
       const int max_iter = 100;
       const double rtol = 1.e-6;
-      double atol = 1.e-6;
+      const double atol = 1.e-6;
       Vector y_out(u_desing.Size());
 
-      int numContraints = 1;
-      double H1SeminormWeight = 0.0;
+      const int numContraints = 1;
+      const double H1SeminormWeight = 0.0;
 
-      RhemosQuadHiOpProblem ot_prob( *qspace,
-                                 pos_final,
-                                 u_initial,
-                                 u_desing,
-                                 u_min,
-                                 u_max, 
-                                 mass_0,
-                                 numContraints,
-                                 H1SeminormWeight);
+      RhemosQuadHiOpProblem ot_prob(*qspace, pos_final,
+                                    u_initial, u_desing,
+                                    u_min, u_max, mass_0,
+                                    numContraints, H1SeminormWeight);
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);
@@ -322,15 +305,14 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       delete optsolver;
    }
 
-   // staying as close as possible to u_interpolated.
-   double mass_final = Integrate(pos_final, &u_desing,
-                              nullptr, nullptr);
+   // Report mass error.
+   mass_f = Integrate(pos_final, &u_desing, nullptr, nullptr);
    if (pmesh_init.GetMyRank() == 0)
    {
       std::cout << "Mass initial: " << mass_0 << std::endl
-                << "Mass final  : " << mass_final << std::endl
-                << "Mass diff  : " << fabs(mass_0 - mass_final) << endl
-                << "Mass diff %: " << fabs(mass_0 - mass_final)/mass_0*100 << endl;
+                << "Mass final  : " << mass_f << std::endl
+                << "Mass diff   : " << fabs(mass_0 - mass_f) << endl
+                << "Mass diff % : " << fabs(mass_0 - mass_f)/mass_0*100 << endl;
    }
 }
 
