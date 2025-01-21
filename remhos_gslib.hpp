@@ -89,6 +89,11 @@ public:
    void Remap(const QuadratureFunction &u_0,
               const ParGridFunction &pos_final, QuadratureFunction &u_final);
 
+   // Remap of an analytic function.
+   // Same as projecting the function to the final mesh.
+   void Remap(std::function<real_t(const Vector &)> func, double mass,
+              const ParGridFunction &pos_final, ParGridFunction &u_final);
+
    // Remap of coupled indicator, density, specific internal energy for
    // single material (no voupling between materials).
    void RemapIndRhoE(const Vector ind_rho_e_0, const ParGridFunction &pos_final,

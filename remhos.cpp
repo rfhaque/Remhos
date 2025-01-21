@@ -71,6 +71,8 @@ double u0_function(const Vector &x);
 double s0_function(const Vector &x);
 double q0_function(const Vector &x);
 
+double u0_total_mass();
+
 // Inflow boundary condition
 double inflow_function(const Vector &x);
 
@@ -156,6 +158,7 @@ int main(int argc, char *argv[])
    LOSolverType lo_type           = LOSolverType::None;
    FCTSolverType fct_type         = FCTSolverType::None;
    MonolithicSolverType mono_type = MonolithicSolverType::None;
+   bool project_analytic          = false;
    int bounds_type = 0;
    bool pa = false;
    bool next_gen_full = false;
@@ -211,6 +214,9 @@ int main(int argc, char *argv[])
                   "                   1 - Residual Distribution,\n\t"
                   "                   2 - Subcell Residual Distribution,\n\t"
                   "                   3 - Interpolation with GSLIB.");
+   args.AddOption(&project_analytic, "-proj", "--project", "-no-proj",
+                  "--no-project",
+                  "Project the analytic IC to the final mesh.");
    args.AddOption(&bounds_type, "-bt", "--bounds-type",
                   "Bounds stencil type: 0 - overlapping elements,\n\t"
                   "                     1 - matrix sparsity pattern.");
@@ -922,13 +928,30 @@ int main(int argc, char *argv[])
    if (mono_type == MonolithicSolverType::InterpolationGF)
    {
       InterpolationRemap interpolator(pmesh);
-      ParGridFunction uu(&pfes);
-      interpolator.Remap(u, x_final, uu);
+      ParGridFunction u_gf(&pfes);
+
+      if (project_analytic)
+      {
+         interpolator.Remap(u0_function, u0_total_mass(), x_final, u_gf);
+      }
+      else { interpolator.Remap(u, x_final, u_gf); }
 
       socketstream sock_uu;
       x = x_final;
-      VisualizeField(sock_uu, "localhost", 19916, uu, "Interpolated u",
+      VisualizeField(sock_uu, "localhost", 19916, u_gf, "Remapped u",
                      400, 0, 400, 400);
+
+      // Print errors w.r.t. exact solution.
+      if (project_analytic)
+      {
+         FunctionCoefficient fcoeff(u0_function);
+         const double e_L1 = u_gf.ComputeL1Error(fcoeff);
+         if (myid == 0)
+         {
+            std::cout << "L1 error: " << e_L1 << std::endl;
+         }
+      }
+
       return 0;
    }
 
@@ -1785,7 +1808,7 @@ double ring(double rin, double rout, Vector c, Vector y)
    }
 }
 
-// Initial condition: lua function or hard-coded functions
+// Initial condition.
 double u0_function(const Vector &x)
 {
    int dim = x.Size();
@@ -1833,7 +1856,8 @@ double u0_function(const Vector &x)
       }
       case 3:
       {
-         return .5*(sin(M_PI*X(0))*sin(M_PI*X(1)) + 1.);
+         // Should be non-symmetric.
+         return sin(M_PI * 1.5 * x(0)) * sin(M_PI * 2.5 * x(1)) + 1.0;
       }
       case 4:
       {
@@ -1940,6 +1964,15 @@ double u0_function(const Vector &x)
       }
    }
    return 0.0;
+}
+
+double u0_total_mass()
+{
+   switch (problem_num)
+   {
+      case 13: return 1.0 / (3.75 * M_PI * M_PI) + 1.0;
+      default: MFEM_ABORT("Analytic mass is not computed for this problem.");
+   }
 }
 
 double s0_function(const Vector &x)
