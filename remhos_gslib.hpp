@@ -45,8 +45,7 @@ private:
 
    // Positions of the DOFs of pfes, for the given mesh positions.
    void GetDOFPositions(const ParFiniteElementSpace &pfes,
-                              const Vector &pos_mesh,
-                              Vector &pos_dofs);
+                        const Vector &pos_mesh, Vector &pos_dofs);
    // Positions of the quads of qspace, for the given mesh positions.
    void GetQuadPositions(const QuadratureSpace &qspace,
                          const Vector &pos_mesh,
@@ -61,14 +60,13 @@ private:
    double Integrate(const Vector &pos, const QuadratureFunction *q1,
                     const QuadratureFunction *q2, const ParGridFunction *g1);
 
-   // Computes bounds for the DOFs of pfes_final, at the mesh positions given
+   // Computes bounds for the DOFs of pfes, at the mesh positions given
    // by pos_final. The bounds are determined by the values of g_init, which
    // is defined with respect on the initial mesh.
    void CalcDOFBounds(const ParGridFunction &g_init,
-                      const ParFiniteElementSpace &pfes_final,
+                      const ParFiniteElementSpace &pfes,
                       const Vector &pos_final,
                       Vector &g_min, Vector &g_max);
-
    // Computes bounds for quadrature values, at the mesh positions given
    // by pos_final. The bounds are determined by the values of qf_init, which
    // is defined with respect on the initial mesh.
@@ -90,6 +88,11 @@ public:
    // Remap of a QuadratureFunction.
    void Remap(const QuadratureFunction &u_0,
               const ParGridFunction &pos_final, QuadratureFunction &u_final);
+
+   // Remap of an analytic function.
+   // Same as projecting the function to the final mesh.
+   void Remap(std::function<real_t(const Vector &)> func, double mass,
+              const ParGridFunction &pos_final, ParGridFunction &u_final);
 
    // Remap of coupled indicator, density, specific internal energy for
    // single material (no voupling between materials).

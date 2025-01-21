@@ -70,7 +70,6 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
 
    ParFiniteElementSpace &pfes_final = *u_final.ParFESpace();
-   const int nsp = pfes_final.GetFE(0)->GetNodes().GetNPoints();
 
    {
       ParaViewDataCollection pvdc("initla_mesh", &pmesh_init);
@@ -86,11 +85,10 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    Vector pos_dof_final;
    GetDOFPositions(pfes_final, pos_final, pos_dof_final);
 
-   const int nodes_cnt = pos_dof_final.Size() / dim;
-
    // Interpolate u_initial.
+   const int nodes_cnt = pos_dof_final.Size() / dim;
    Vector interp_vals(nodes_cnt);
-   FindPointsGSLIB finder(pfes_final.GetComm());
+   FindPointsGSLIB finder(pmesh_init.GetComm());
    finder.Setup(pmesh_init);
    finder.Interpolate(pos_dof_final, u_initial, interp_vals);
 
@@ -410,6 +408,79 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    // ...
 }
 
+void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
+                               double mass, const ParGridFunction &pos_final,
+                               ParGridFunction &u)
+{
+   const int dim = pmesh_init.Dimension();
+   MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
+
+   // Generate list of points where u_initial will be interpolated.
+   // The interpolation is to Gauss-Legendre to keep optimal order.
+   L2_FECollection fec_GL(u.ParFESpace()->FEColl()->GetOrder(),
+                          dim, BasisType::GaussLegendre);
+   ParFiniteElementSpace pfes_GL(u.ParFESpace()->GetParMesh(), &fec_GL);
+   Vector pos_dof_final;
+   GetDOFPositions(pfes_GL, pos_final, pos_dof_final);
+
+   // Interpolate the function.
+   const int nodes_cnt = pos_dof_final.Size() / dim;
+   Vector interp_vals(nodes_cnt), node_pos(dim);
+   for (int i = 0; i < nodes_cnt; i++)
+   {
+      for (int d = 0; d < dim; d++)
+      {
+         node_pos(d) = pos_dof_final(d * nodes_cnt + i);
+      }
+      interp_vals(i) = func(node_pos);
+   }
+
+   // This assumes L2 ordering of the DOFs (as the ordering of the quad points).
+   ParGridFunction u_GL(&pfes_GL);
+   u_GL = interp_vals;
+   // Go Gauss-Legendre -> Bernstein.
+   u.ProjectGridFunction(u_GL);
+
+   // Report masses.
+   const double mass_t = Mass(pos_final, u);
+   if (pmesh_init.GetMyRank() == 0)
+   {
+      std::cout << "Mass initial: " << mass   << std::endl
+                << "Mass final  : " << mass_t << std::endl
+                << "Mass diff  : " << fabs(mass - mass_t) << endl
+                << "Mass diff %: " << fabs(mass - mass_t)/mass*100 << endl;
+   }
+
+   // Compute min / max bounds.
+   // Projects to a GridFunction to get some reasonable min/max per element.
+   Vector u_final_min, u_final_max;
+   ParGridFunction func_gf(u.ParFESpace());
+   FunctionCoefficient coeff(func);
+   func_gf.ProjectCoefficient(coeff);
+   CalcDOFBounds(func_gf, *u.ParFESpace(), pos_final, u_final_min, u_final_max);
+   if (vis_bounds)
+   {
+      ParGridFunction gf_min(func_gf), gf_max(func_gf);
+      gf_min = u_final_min, gf_max = u_final_max;
+
+      socketstream vis_min, vis_max;
+      char vishost[] = "localhost";
+      int  visport   = 19916;
+      vis_min.precision(8);
+      vis_max.precision(8);
+
+      *x = pos_final;
+      VisualizeField(vis_min, vishost, visport, gf_min, "u min",
+                     0, 500, 300, 300);
+      VisualizeField(vis_max, vishost, visport, gf_max, "u max",
+                     300, 500, 300, 300);
+      *x = pos_init;
+   }
+
+   // Optimize u here.
+   // ...
+}
+
 void InterpolationRemap::GetDOFPositions(const ParFiniteElementSpace &pfes,
                                          const Vector &pos_mesh,
                                          Vector &pos_dofs)
@@ -427,14 +498,15 @@ void InterpolationRemap::GetDOFPositions(const ParFiniteElementSpace &pfes,
       pmesh_init.GetElementTransformation(e, pos_mesh, &Tr);
 
       // Node positions of pfes for pos_mesh.
-      DenseMatrix pos_nodes;
-      Tr.Transform(ir, pos_nodes);
       Vector rowx(pos_dofs.GetData() + e*nsp, nsp),
              rowy(pos_dofs.GetData() + e*nsp + NE*nsp, nsp), rowz;
       if (dim == 3)
       {
          rowz.SetDataAndSize(pos_dofs.GetData() + e*nsp + 2*NE*nsp, nsp);
       }
+
+      DenseMatrix pos_nodes;
+      Tr.Transform(ir, pos_nodes);
       pos_nodes.GetRow(0, rowx);
       pos_nodes.GetRow(1, rowy);
       if (dim == 3) { pos_nodes.GetRow(2, rowz); }
@@ -475,6 +547,7 @@ void InterpolationRemap::GetQuadPositions(const QuadratureSpace &qspace,
 double InterpolationRemap::Mass(const Vector &pos, const ParGridFunction &g)
 {
    double mass = 0.0;
+
    const int NE = g.ParFESpace()->GetNE();
    for (int e = 0; e < NE; e++)
    {
@@ -495,7 +568,7 @@ double InterpolationRemap::Mass(const Vector &pos, const ParGridFunction &g)
       }
    }
    MPI_Allreduce(MPI_IN_PLACE, &mass, 1, MPI_DOUBLE, MPI_SUM,
-                 g.ParFESpace()->GetComm());
+                 pmesh_init.GetComm());
    return mass;
 }
 
@@ -543,11 +616,11 @@ double InterpolationRemap::Integrate(const Vector &pos,
 }
 
 void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
-                                       const ParFiniteElementSpace &pfes_fin,
+                                       const ParFiniteElementSpace &pfes,
                                        const Vector &pos_final,
                                        Vector &g_min, Vector &g_max)
 {
-   const int size_res = pfes_fin.GetVSize();
+   const int size_res = pfes.GetVSize();
    g_min.SetSize(size_res);
    g_max.SetSize(size_res);
 
@@ -564,7 +637,7 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
    }
 
    Vector pos_nodes_final;
-   GetDOFPositions(pfes_fin, pos_final, pos_nodes_final);
+   GetDOFPositions(pfes, pos_final, pos_nodes_final);
 
    FindPointsGSLIB finder(pmesh_init.GetComm());
    finder.Setup(pmesh_init);
