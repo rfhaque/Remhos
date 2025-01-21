@@ -478,7 +478,55 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    }
 
    // Optimize u here.
-   // ...
+   {
+      *x = pos_final;
+      OptimizationSolver* optsolver = NULL;
+      {
+#ifdef MFEM_USE_HIOP
+         HiopNlpOptimizer *tmp_opt_ptr = new HiopNlpOptimizer(MPI_COMM_WORLD);
+         optsolver = tmp_opt_ptr;
+#else
+         MFEM_ABORT("MFEM is not built with HiOp support!");
+#endif
+      }
+
+      const int max_iter = 100;
+      const double rtol = 1.e-7;
+      const double atol = 1.e-7;
+      Vector y_out(u.Size());
+
+      const int numContraints = 1;
+      const double H1SeminormWeight = 0.0;
+
+      RhemosHiOpProblem ot_prob(*u.ParFESpace(),
+                                func_gf,
+                                u,
+                                u_final_min,
+                                u_final_max,
+                                mass,
+                                numContraints,
+                                H1SeminormWeight);
+      optsolver->SetOptimizationProblem(ot_prob);
+
+      optsolver->SetMaxIter(max_iter);
+      optsolver->SetAbsTol(atol);
+      optsolver->SetRelTol(rtol);
+      optsolver->SetPrintLevel(3);
+      optsolver->Mult(u, y_out);
+
+      u = y_out;
+
+      delete optsolver;
+   }
+
+   double mass_f = Mass(pos_final, u);
+   if (pmesh_init.GetMyRank() == 0)
+   {
+      std::cout << "Mass initial: " << mass << std::endl
+                << "Mass final  : " << mass_f << std::endl
+                << "Mass diff  : " << fabs(mass - mass_f) << endl
+                << "Mass diff %: " << fabs(mass - mass_f)/mass*100 << endl;
+   }
 }
 
 void InterpolationRemap::GetDOFPositions(const ParFiniteElementSpace &pfes,
