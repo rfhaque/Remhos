@@ -233,7 +233,12 @@ public:
 
       real_t norm = x_diff.Norml2();
 
-      return 0.5 * norm * norm;
+      real_t normSq = norm * norm;
+
+      MPI_Allreduce(MPI_IN_PLACE, &normSq, 1, MPI_DOUBLE, MPI_SUM,
+                 MPI_COMM_WORLD);
+
+      return 0.5 * normSq;
    }
 
    virtual void CalcObjectiveGrad(const Vector &x, Vector &grad) const
@@ -279,9 +284,11 @@ public:
                Tr.SetIntPoint(&ip);
 
                grad[s_offset+q] = Tr.Weight() * ip.weight;
+
             }
          }
       }
+
    }
 
    virtual void CalcConstraint(const int constNumber, const Vector &x, Vector &constVal) const

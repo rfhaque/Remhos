@@ -91,6 +91,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    FindPointsGSLIB finder(pmesh_init.GetComm());
    finder.Setup(pmesh_init);
    finder.Interpolate(pos_dof_final, u_initial, interp_vals);
+   finder.FreeData();
 
    // This assumes L2 ordering of the DOFs (as the ordering of the quad points).
    ParGridFunction u_interpolated(&pfes_final);
@@ -184,7 +185,9 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       optsolver->SetAbsTol(atol);
       optsolver->SetRelTol(rtol);
       optsolver->SetPrintLevel(3);
-      optsolver->Mult(u_interpolated, y_out);
+      optsolver->Mult(u_interpolated, y_out);\
+
+      // fix parallel. u_interpolated and y_out shoul be true vectors
 
       u_interpolated = y_out;
 
@@ -238,6 +241,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    FindPointsGSLIB finder(pmesh_init.GetComm());
    finder.Setup(pmesh_lor);
    finder.Interpolate(pos_quad_final, u_0_lor, u);
+   finder.FreeData();
 
    // Report mass error.
    const double mass_0 = Integrate(*pmesh_init.GetNodes(), &u_0,
@@ -365,6 +369,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    finder.Interpolate(pos_quad_final, rho_0_lor, rho);
    finder.Setup(pmesh_init);
    finder.Interpolate(pos_dof_final, e_0, e);
+   finder.FreeData();
 
    // Report conservation errors of ire_final.
    const double volume_0 = Integrate(*pmesh_init.GetNodes(), &ind_0,
@@ -691,6 +696,7 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
    finder.Setup(pmesh_init);
    finder.Interpolate(pos_nodes_final, g_el_min, g_min);
    finder.Interpolate(pos_nodes_final, g_el_max, g_max);
+   finder.FreeData();
 }
 
 void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
@@ -721,6 +727,7 @@ void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
    finder.Setup(pmesh_init);
    finder.Interpolate(pos_quads_final, g_el_min, g_min);
    finder.Interpolate(pos_quads_final, g_el_max, g_max);
+   finder.FreeData();
 }
 
 } // namespace mfem
