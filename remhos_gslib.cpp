@@ -497,7 +497,7 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
                                        const Vector &pos_final,
                                        Vector &g_min, Vector &g_max)
 {
-   const int size_res = pfes.GetVSize();
+   const int size_res = pfes.GetVSize(), NE = pmesh_init.GetNE();
    g_min.SetSize(size_res);
    g_max.SetSize(size_res);
 
@@ -505,7 +505,7 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
    L2_FECollection fec_L2(0, pmesh_init.Dimension());
    ParFiniteElementSpace pfes_L2(&pmesh_init, &fec_L2);
    ParGridFunction g_el_min(&pfes_L2), g_el_max(&pfes_L2);
-   for (int e = 0; e < pmesh_init.GetNE(); e++)
+   for (int e = 0; e < NE; e++)
    {
       Vector g_vals;
       g_init.GetElementDofValues(e, g_vals);
@@ -520,13 +520,32 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
    finder.Setup(pmesh_init);
    finder.Interpolate(pos_nodes_final, g_el_min, g_min);
    finder.Interpolate(pos_nodes_final, g_el_max, g_max);
+
+   for (int e = 0; e < NE; e++)
+   {
+      Array<int> dofs;
+      pfes.GetElementDofs(e, dofs);
+      const int s = dofs.Size();
+
+      Vector g_vals;
+      g_min.GetSubVector(dofs, g_vals);
+      const double minv = g_vals.Min();
+      g_max.GetSubVector(dofs, g_vals);
+      const double maxv = g_vals.Max();
+
+      for (int i = 0; i < s; i++)
+      {
+         g_min(s * e + i) = minv;
+         g_max(s * e + i) = maxv;
+      }
+   }
 }
 
 void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
                                         const Vector &pos_final,
                                         Vector &g_min, Vector &g_max)
 {
-   const int size_res = qf_init.Size();
+   const int size_res = qf_init.Size(), NE = pmesh_init.GetNE();
    g_min.SetSize(size_res);
    g_max.SetSize(size_res);
 
@@ -534,7 +553,7 @@ void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
    L2_FECollection fec_L2(0, pmesh_init.Dimension());
    ParFiniteElementSpace pfes_L2(&pmesh_init, &fec_L2);
    ParGridFunction g_el_min(&pfes_L2), g_el_max(&pfes_L2);
-   for (int e = 0; e < pmesh_init.GetNE(); e++)
+   for (int e = 0; e < NE; e++)
    {
       Vector q_vals;
       qf_init.GetValues(e, q_vals);
@@ -550,6 +569,28 @@ void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
    finder.Setup(pmesh_init);
    finder.Interpolate(pos_quads_final, g_el_min, g_min);
    finder.Interpolate(pos_quads_final, g_el_max, g_max);
+
+   int el_e_idx = 0;
+   for (int e = 0; e < NE; e++)
+   {
+      const IntegrationRule &ir = qspace->GetElementIntRule(e);
+      const int nqp = ir.GetNPoints();
+
+      double minv = g_min(el_e_idx), maxv = g_max(el_e_idx);
+      for (int q = 1; q < nqp; q++)
+      {
+         minv = fmin(minv, g_min(el_e_idx + q));
+         maxv = fmax(maxv, g_max(el_e_idx + q));
+      }
+
+      for (int q = 0; q < nqp; q++)
+      {
+         g_min(el_e_idx + q) = minv;
+         g_max(el_e_idx + q) = maxv;
+      }
+
+      el_e_idx += nqp;
+   }
 }
 
 } // namespace mfem
