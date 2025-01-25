@@ -503,8 +503,11 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
       const int numContraints = 1;
       const double H1SeminormWeight = 0.0;
 
+      // u_final_min = 0.0;
+      // u_final_max = 1.0;
+
       RhemosHiOpProblem ot_prob(*u.ParFESpace(),
-                                func_gf,
+                                u,
                                 u,
                                 u_final_min,
                                 u_final_max,
