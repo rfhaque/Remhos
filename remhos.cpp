@@ -48,8 +48,10 @@ enum class FCTSolverType {None, FluxBased, ClipScale,
                           NonlinearPenalty, FCTProject};
 enum class LOSolverType {None,    DiscrUpwind,    DiscrUpwindPrec,
                          ResDist, ResDistSubcell, MassBased};
-enum class MonolithicSolverType {None, ResDistMono,
-                                 ResDistMonoSubcell, Interpolation};
+
+enum class MonolithicSolverType
+{ None, ResDistMono, ResDistMonoSubcell,
+  InterpolationGF, InterpolationQF, InterpolationIndRhoE };
 
 enum class TimeStepControl {FixedTimeStep, LOBoundsError};
 
@@ -67,6 +69,9 @@ void velocity_function(const Vector &x, Vector &v);
 // Initial condition
 double u0_function(const Vector &x);
 double s0_function(const Vector &x);
+double q0_function(const Vector &x);
+
+double u0_total_mass();
 
 // Inflow boundary condition
 double inflow_function(const Vector &x);
@@ -153,6 +158,7 @@ int main(int argc, char *argv[])
    LOSolverType lo_type           = LOSolverType::None;
    FCTSolverType fct_type         = FCTSolverType::None;
    MonolithicSolverType mono_type = MonolithicSolverType::None;
+   bool project_analytic          = false;
    int bounds_type = 0;
    bool pa = false;
    bool next_gen_full = false;
@@ -208,6 +214,9 @@ int main(int argc, char *argv[])
                   "                   1 - Residual Distribution,\n\t"
                   "                   2 - Subcell Residual Distribution,\n\t"
                   "                   3 - Interpolation with GSLIB.");
+   args.AddOption(&project_analytic, "-proj", "--project", "-no-proj",
+                  "--no-project",
+                  "Project the analytic IC to the final mesh.");
    args.AddOption(&bounds_type, "-bt", "--bounds-type",
                   "Bounds stencil type: 0 - overlapping elements,\n\t"
                   "                     1 - matrix sparsity pattern.");
@@ -916,19 +925,124 @@ int main(int argc, char *argv[])
       t_final = 1.0;
    }
 
-   if (mono_type == MonolithicSolverType::Interpolation)
+   if (mono_type == MonolithicSolverType::InterpolationGF)
    {
       InterpolationRemap interpolator(pmesh);
-      ParGridFunction uu(&pfes);
-      interpolator.Remap(u, x_final, uu);
-      if (visualization)
+      ParGridFunction u_gf(&pfes);
+
+      if (project_analytic)
       {
-         socketstream sock_uu;
-         x = x_final;
-         VisualizeField(sock_uu, "localhost", 19916, uu, "Interpolated u",
-                        400, 0, 400, 400);
-         x = x0;
+         interpolator.Remap(u0_function, u0_total_mass(), x_final, u_gf);
       }
+      else { interpolator.Remap(u, x_final, u_gf); }
+
+      socketstream sock_uu;
+      x = x_final;
+      VisualizeField(sock_uu, "localhost", 19916, u_gf, "Remapped u",
+                     400, 0, 400, 400);
+
+      // Print errors w.r.t. exact solution.
+      if (project_analytic)
+      {
+         FunctionCoefficient fcoeff(u0_function);
+         const double e_L1 = u_gf.ComputeL1Error(fcoeff);
+         if (myid == 0)
+         {
+            std::cout << "L1 error: " << e_L1 << std::endl;
+         }
+      }
+
+      return 0;
+   }
+
+   if (mono_type == MonolithicSolverType::InterpolationQF)
+   {
+      const IntegrationRule &ir =
+          IntRules.Get(pmesh.GetElementBaseGeometry(0), 5);
+      QuadratureSpace qspace(pmesh, ir);
+      QuadratureFunction u_qf(qspace);
+      InitializeQuadratureFunction(u0, x0, u_qf);
+
+      osockstream sol_sock(19916, "localhost");
+      sol_sock << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
+      sol_sock << "quadrature\n" << pmesh << u_qf << std::flush;
+      sol_sock << "window_title 'Initial QuadFunc'\n";
+      sol_sock << "window_geometry 400 0 400 400\n";
+      sol_sock << "keys rmj\n";
+      sol_sock.send();
+
+      QuadratureFunction uu_qf(qspace);
+      InterpolationRemap interpolator(pmesh);
+      interpolator.Remap(u_qf, x_final, uu_qf);
+
+      x = x_final;
+      osockstream sol_sock_res(19916, "localhost");
+      sol_sock_res << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
+      sol_sock_res << "quadrature\n" << pmesh << uu_qf << std::flush;
+      sol_sock_res << "window_title 'Remapped QuadFunc'\n";
+      sol_sock_res << "window_geometry 1200 0 400 400\n";
+      sol_sock_res << "keys rmj\n";
+      sol_sock_res.send();
+
+      return 0;
+   }
+
+   if (mono_type == MonolithicSolverType::InterpolationIndRhoE)
+   {
+      MFEM_VERIFY(dim == 2, "Not setup in 3D yet.");
+
+      const IntegrationRule &ir =
+          IntRules.Get(pmesh.GetElementBaseGeometry(0), 5);
+      QuadratureSpace qspace(pmesh, ir);
+
+      // Setup the BlockVector (ordered ind-rho-e).
+      const int size_qf = qspace.GetSize(),
+                size_gf = pfes.GetNDofs();
+      Array<int> offset(4);
+      offset[0] = 0;
+      offset[1] = offset[0] + size_qf;
+      offset[2] = offset[1] + size_qf;
+      offset[3] = offset[2] + size_gf;
+      BlockVector ind_rho_e_0(offset, Device::GetMemoryType());
+
+      QuadratureFunction ind_0(&qspace, ind_rho_e_0.GetBlock(0).GetData()),
+                         rho_0(&qspace, ind_rho_e_0.GetBlock(1).GetData());
+      ParGridFunction e_0(&pfes, ind_rho_e_0.GetBlock(2).GetData());
+
+      // Initialize only in the support of ind_0.
+      Array<bool> ind_0_bool_el, ind_0_bool_dofs;
+      ComputeBoolIndicators(pmesh.GetNE(), u, ind_0_bool_el, ind_0_bool_dofs);
+      BoolFunctionCoefficient rho_0_coeff(s0_function, ind_0_bool_el),
+                              e_0_coeff(q0_function, ind_0_bool_el);
+      InitializeQuadratureFunction(u0, x0, ind_0);
+      InitializeQuadratureFunction(rho_0_coeff, x0, rho_0);
+      e_0.ProjectCoefficient(e_0_coeff);
+
+      // Visualize initial values.
+      VisQuadratureFunction(pmesh, ind_0, "ind_0 QF", 0, 500);
+      VisQuadratureFunction(pmesh, rho_0, "rho_0 QF", 400, 500);
+      socketstream sock;
+      VisualizeField(sock, "localhost", 19916, e_0, "e_0 GF",
+                     800, 500, 400, 400);
+
+      // Remap.
+      BlockVector ind_rho_e(offset);
+      InterpolationRemap interpolator(pmesh);
+      interpolator.SetQuadratureSpace(qspace);
+      interpolator.SetEnergyFESpace(pfes);
+      interpolator.RemapIndRhoE(ind_rho_e_0, x_final, ind_rho_e);
+
+      QuadratureFunction ind(&qspace, ind_rho_e.GetBlock(0).GetData()),
+                         rho(&qspace, ind_rho_e.GetBlock(1).GetData());
+      ParGridFunction e(&pfes, ind_rho_e.GetBlock(2).GetData());
+
+      // Visualize final values.
+      x = x_final;
+      VisQuadratureFunction(pmesh, ind, "ind QF", 0, 500);
+      VisQuadratureFunction(pmesh, rho, "rho QF", 400, 500);
+      socketstream sock_f;
+      VisualizeField(sock_f, "localhost", 19916, e, "e GF", 800, 500, 400, 400);
+
       return 0;
    }
 
@@ -1694,7 +1808,7 @@ double ring(double rin, double rout, Vector c, Vector y)
    }
 }
 
-// Initial condition: lua function or hard-coded functions
+// Initial condition.
 double u0_function(const Vector &x)
 {
    int dim = x.Size();
@@ -1742,7 +1856,8 @@ double u0_function(const Vector &x)
       }
       case 3:
       {
-         return .5*(sin(M_PI*X(0))*sin(M_PI*X(1)) + 1.);
+         // Should be non-symmetric.
+         return sin(M_PI * 1.5 * x(0)) * sin(M_PI * 2.5 * x(1)) + 1.0;
       }
       case 4:
       {
@@ -1851,10 +1966,25 @@ double u0_function(const Vector &x)
    return 0.0;
 }
 
+double u0_total_mass()
+{
+   switch (problem_num)
+   {
+      case 13: return 1.0 / (3.75 * M_PI * M_PI) + 1.0;
+      default: MFEM_ABORT("Analytic mass is not computed for this problem.");
+   }
+}
+
 double s0_function(const Vector &x)
 {
    // Simple nonlinear function.
    return 2.0 + sin(2*M_PI * x(0)) * sin(2*M_PI * x(1));
+}
+
+double q0_function(const Vector &x)
+{
+   // Simple nonlinear function.
+   return 2.0 + cos(2*M_PI * x(0)) * cos(2*M_PI * x(1));
 }
 
 double inflow_function(const Vector &x)

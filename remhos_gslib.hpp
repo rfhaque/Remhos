@@ -22,6 +22,13 @@
 namespace mfem
 {
 
+void InitializeQuadratureFunction(Coefficient &c,
+                                  const Vector &pos_mesh,
+                                  QuadratureFunction &q);
+
+void VisQuadratureFunction(ParMesh &pmesh, QuadratureFunction &q,
+                           std::string info, int x, int y);
+
 class InterpolationRemap
 {
 private:
@@ -34,29 +41,65 @@ private:
    // Initial mesh node positions.
    const Vector pos_init;
 
+   ParFiniteElementSpace *pfes_e = nullptr;
+   QuadratureSpace *qspace = nullptr;
+
    // Positions of the DOFs of pfes, for the given mesh positions.
    void GetDOFPositions(const ParFiniteElementSpace &pfes,
-                              const Vector &pos_mesh,
-                              Vector &pos_dofs);
+                        const Vector &pos_mesh, Vector &pos_dofs);
+   // Positions of the quads of qspace, for the given mesh positions.
+   void GetQuadPositions(const QuadratureSpace &qspace,
+                         const Vector &pos_mesh,
+                         Vector &pos_quads);
 
    // Mass of g for the given mesh positions.
    double Mass(const Vector &pos, const ParGridFunction &g);
 
-   // Computes bounds for the DOFs of pfes_final, at the mesh positions given
+   // Integral(q1 * q2 * g1) at the given mesh positions.
+   // When some pointer is nullptr, its function is taken as 1.
+   // Uses the IntegrationRule of the QuadratureFunctions if these are given.
+   double Integrate(const Vector &pos, const QuadratureFunction *q1,
+                    const QuadratureFunction *q2, const ParGridFunction *g1);
+
+   // Computes bounds for the DOFs of pfes, at the mesh positions given
    // by pos_final. The bounds are determined by the values of g_init, which
    // is defined with respect on the initial mesh.
    void CalcDOFBounds(const ParGridFunction &g_init,
-                      const ParFiniteElementSpace &pfes_final,
+                      const ParFiniteElementSpace &pfes,
                       const Vector &pos_final,
-                      Vector &g_min, Vector &g_max, bool elementwise=false);
+                      Vector &g_min, Vector &g_max);
+   // Computes bounds for quadrature values, at the mesh positions given
+   // by pos_final. The bounds are determined by the values of qf_init, which
+   // is defined with respect on the initial mesh.
+   void CalcQuadBounds(const QuadratureFunction &qf_init,
+                       const Vector &pos_final,
+                       Vector &g_min, Vector &g_max);
 
 public:
    InterpolationRemap(ParMesh &m)
        : pmesh_init(m), pmesh_final(pmesh_init, true),
          x(pmesh_init.GetNodes()), pos_init(*x) { }
 
+   void SetQuadratureSpace(QuadratureSpace &qs) { qspace = &qs; }
+   void SetEnergyFESpace(ParFiniteElementSpace &es) { pfes_e = &es; }
+
+   // Remap of an L2 ParGridFunction.
    void Remap(const ParGridFunction &u_initial,
               const ParGridFunction &pos_final, ParGridFunction &u_final);
+
+   // Remap of a QuadratureFunction.
+   void Remap(const QuadratureFunction &u_0,
+              const ParGridFunction &pos_final, QuadratureFunction &u_final);
+
+   // Remap of an analytic function.
+   // Same as projecting the function to the final mesh.
+   void Remap(std::function<real_t(const Vector &)> func, double mass,
+              const ParGridFunction &pos_final, ParGridFunction &u_final);
+
+   // Remap of coupled indicator, density, specific internal energy for
+   // single material (no voupling between materials).
+   void RemapIndRhoE(const Vector ind_rho_e_0, const ParGridFunction &pos_final,
+                     Vector &ind_rho_e);
 
    bool vis_bounds = true;
 };
