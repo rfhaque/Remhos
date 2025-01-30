@@ -104,12 +104,6 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    // Compute min / max bounds.
    Vector u_final_min, u_final_max;
    CalcDOFBounds(u_initial, pfes_final, pos_final, u_final_min, u_final_max);
-
-   MDSolver md(pfes_tmp, mass_s, u_interpolated, u_final_min, u_final_max);
-
-   md.Optimize(1000,1000,1000);
-   md.SetFinal(u_final);
-
    if (vis_bounds)
    {
       ParGridFunction gf_min(u_initial), gf_max(u_initial);
@@ -128,6 +122,11 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
                      300, 500, 300, 300);
       *x = pos_init;
    }
+
+   MDSolver md(pfes_tmp, mass_s, u_interpolated, u_final_min, u_final_max);
+
+   md.Optimize(1000,1000,1000);
+   md.SetFinal(u_final);
 
    // Report masses.
    const double mass_f = Mass(pos_final, u_final);
@@ -226,6 +225,9 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
                                double mass, const ParGridFunction &pos_final,
                                ParGridFunction &u)
 {
+   pmesh_final.SetNodes(pos_final);
+   ParFiniteElementSpace pfes_tmp(&pmesh_final, u.ParFESpace()->FEColl());
+
    const int dim = pmesh_init.Dimension();
    MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
 
@@ -256,13 +258,13 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    u.ProjectGridFunction(u_GL);
 
    // Report masses.
-   const double mass_t = Mass(pos_final, u);
+   double mass_f = Mass(pos_final, u);
    if (pmesh_init.GetMyRank() == 0)
    {
       std::cout << "Mass initial: " << mass   << std::endl
-                << "Mass final  : " << mass_t << std::endl
-                << "Mass diff  : " << fabs(mass - mass_t) << endl
-                << "Mass diff %: " << fabs(mass - mass_t)/mass*100 << endl;
+                << "Mass final  : " << mass_f << std::endl
+                << "Mass diff  : " << fabs(mass - mass_f) << endl
+                << "Mass diff %: " << fabs(mass - mass_f)/mass*100 << endl;
    }
 
    // Compute min / max bounds.
@@ -291,8 +293,21 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
       *x = pos_init;
    }
 
-   // Optimize u here.
-   // ...
+   ParGridFunction u_interpolated(u);
+   MDSolver md(pfes_tmp, mass, u_interpolated, u_final_min, u_final_max);
+
+   md.Optimize(5,1000,1000);
+   md.SetFinal(u);
+
+   // Report masses.
+   mass_f = Mass(pos_final, u);
+   if (pmesh_init.GetMyRank() == 0)
+   {
+      std::cout << "Mass initial: " << mass << std::endl
+                << "Mass final  : " << mass_f << std::endl
+                << "Mass diff   : " << fabs(mass - mass_f) << endl
+                << "Mass diff % : " << fabs(mass - mass_f)/mass*100 << endl;
+   }
 }
 
 void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
