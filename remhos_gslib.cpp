@@ -63,7 +63,7 @@ void VisQuadratureFunction(ParMesh &pmesh, QuadratureFunction &q,
 
 void InterpolationRemap::Remap(const ParGridFunction &u_initial,
                                const ParGridFunction &pos_final,
-                               ParGridFunction &u_final)
+                               ParGridFunction &u_final, int opt_type)
 {
    const int dim = pmesh_init.Dimension();
    MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
@@ -99,7 +99,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    // Compute min / max bounds.
    Vector u_final_min, u_final_max;
    CalcDOFBounds(u_initial, pfes_final, pos_final, u_final_min, u_final_max);
-   if (vis_bounds)
+   if (visualization)
    {
       ParGridFunction gf_min(u_initial), gf_max(u_initial);
       gf_min = u_final_min, gf_max = u_final_max;
@@ -125,7 +125,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
 
 void InterpolationRemap::Remap(const QuadratureFunction &u_0,
                                const ParGridFunction &pos_final,
-                               QuadratureFunction &u)
+                               QuadratureFunction &u, int opt_type)
 {
    const int dim = pmesh_init.Dimension();
    MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
@@ -149,8 +149,11 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    u_0_lor = u_0;
 
    // Visualize the initial LOR GridFunction.
-   socketstream sock;
-   VisualizeField(sock, "localhost", 19916, u_0_lor, "u_0 LOR", 800, 0, 400, 400);
+   if (visualization)
+   {
+      socketstream sock;
+      VisualizeField(sock, "localhost", 19916, u_0_lor, "u_0 LOR", 800, 0, 400, 400);
+   }
 
    // Interpolate u_initial.
    const int quads_cnt = pos_quad_final.Size() / dim;
@@ -174,7 +177,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    // Compute min / max bounds.
    Vector u_min, u_max;
    CalcQuadBounds(u_0, pos_final, u_min, u_max);
-   if (vis_bounds)
+   if (visualization)
    {
       QuadratureFunction gf_min(qspace), gf_max(qspace);
       gf_min = u_min, gf_max = u_max;
@@ -193,7 +196,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
 
 void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
                                double mass, const ParGridFunction &pos_final,
-                               ParGridFunction &u)
+                               ParGridFunction &u, int opt_type)
 {
    const int dim = pmesh_init.Dimension();
    MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
@@ -241,7 +244,7 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    FunctionCoefficient coeff(func);
    func_gf.ProjectCoefficient(coeff);
    CalcDOFBounds(func_gf, *u.ParFESpace(), pos_final, u_final_min, u_final_max);
-   if (vis_bounds)
+   if (visualization)
    {
       ParGridFunction gf_min(func_gf), gf_max(func_gf);
       gf_min = u_final_min, gf_max = u_final_max;
@@ -266,7 +269,7 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
 
 void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
                                       const ParGridFunction &pos_final,
-                                      Vector &ind_rho_e)
+                                      Vector &ind_rho_e, int opt_type)
 {
    const int dim = pmesh_init.Dimension();
    MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
@@ -299,9 +302,12 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    rho_0_lor = rho_0;
 
    // Visualize the initial LOR GridFunctions.
-   socketstream sock_ind, sock_rho;
-   VisualizeField(sock_ind, "localhost", 19916, ind_0_lor, "ind_0 LOR", 0, 500, 400, 400);
-   VisualizeField(sock_rho, "localhost", 19916, rho_0_lor, "rho_0 LOR", 400, 500, 400, 400);
+   if (visualization)
+   {
+      socketstream sock_ind, sock_rho;
+      VisualizeField(sock_ind, "localhost", 19916, ind_0_lor, "ind_0 LOR", 0, 500, 400, 400);
+      VisualizeField(sock_rho, "localhost", 19916, rho_0_lor, "rho_0 LOR", 400, 500, 400, 400);
+   }
 
    // Interpolate into ind_rho_e.
    const int quads_cnt = pos_quad_final.Size() / dim;

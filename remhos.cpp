@@ -159,6 +159,7 @@ int main(int argc, char *argv[])
    FCTSolverType fct_type         = FCTSolverType::None;
    MonolithicSolverType mono_type = MonolithicSolverType::None;
    bool project_analytic          = false;
+   int optimization_type = 0;
    int bounds_type = 0;
    bool pa = false;
    bool next_gen_full = false;
@@ -217,6 +218,10 @@ int main(int argc, char *argv[])
    args.AddOption(&project_analytic, "-proj", "--project", "-no-proj",
                   "--no-project",
                   "Project the analytic IC to the final mesh.");
+   args.AddOption(&optimization_type, "-opt", "--optimization-type",
+                  "Optimization type: 0 - no optimization,\n\t"
+                  "                   1 - HiOp,\n\t"
+                  "                   2 - LVPP.");
    args.AddOption(&bounds_type, "-bt", "--bounds-type",
                   "Bounds stencil type: 0 - overlapping elements,\n\t"
                   "                     1 - matrix sparsity pattern.");
@@ -928,18 +933,23 @@ int main(int argc, char *argv[])
    if (mono_type == MonolithicSolverType::InterpolationGF)
    {
       InterpolationRemap interpolator(pmesh);
+      interpolator.visualization = visualization;
       ParGridFunction u_gf(&pfes);
 
       if (project_analytic)
       {
-         interpolator.Remap(u0_function, u0_total_mass(), x_final, u_gf);
+         interpolator.Remap(u0_function, u0_total_mass(),
+                            x_final, u_gf, optimization_type);
       }
-      else { interpolator.Remap(u, x_final, u_gf); }
+      else { interpolator.Remap(u, x_final, u_gf, optimization_type); }
 
-      socketstream sock_uu;
-      x = x_final;
-      VisualizeField(sock_uu, "localhost", 19916, u_gf, "Remapped u",
-                     400, 0, 400, 400);
+      if (visualization)
+      {
+         socketstream sock_uu;
+         x = x_final;
+         VisualizeField(sock_uu, "localhost", 19916, u_gf, "Remapped u",
+                        400, 0, 400, 400);
+      }
 
       // Print errors w.r.t. exact solution.
       if (project_analytic)
@@ -963,26 +973,33 @@ int main(int argc, char *argv[])
       QuadratureFunction u_qf(qspace);
       InitializeQuadratureFunction(u0, x0, u_qf);
 
-      osockstream sol_sock(19916, "localhost");
-      sol_sock << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
-      sol_sock << "quadrature\n" << pmesh << u_qf << std::flush;
-      sol_sock << "window_title 'Initial QuadFunc'\n";
-      sol_sock << "window_geometry 400 0 400 400\n";
-      sol_sock << "keys rmj\n";
-      sol_sock.send();
+      if (visualization)
+      {
+         osockstream sol_sock(19916, "localhost");
+         sol_sock << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
+         sol_sock << "quadrature\n" << pmesh << u_qf << std::flush;
+         sol_sock << "window_title 'Initial QuadFunc'\n";
+         sol_sock << "window_geometry 400 0 400 400\n";
+         sol_sock << "keys rmj\n";
+         sol_sock.send();
+      }
 
       QuadratureFunction uu_qf(qspace);
       InterpolationRemap interpolator(pmesh);
-      interpolator.Remap(u_qf, x_final, uu_qf);
+      interpolator.visualization = visualization;
+      interpolator.Remap(u_qf, x_final, uu_qf, optimization_type);
 
-      x = x_final;
-      osockstream sol_sock_res(19916, "localhost");
-      sol_sock_res << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
-      sol_sock_res << "quadrature\n" << pmesh << uu_qf << std::flush;
-      sol_sock_res << "window_title 'Remapped QuadFunc'\n";
-      sol_sock_res << "window_geometry 1200 0 400 400\n";
-      sol_sock_res << "keys rmj\n";
-      sol_sock_res.send();
+      if (visualization)
+      {
+         x = x_final;
+         osockstream sol_sock_res(19916, "localhost");
+         sol_sock_res << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
+         sol_sock_res << "quadrature\n" << pmesh << uu_qf << std::flush;
+         sol_sock_res << "window_title 'Remapped QuadFunc'\n";
+         sol_sock_res << "window_geometry 1200 0 400 400\n";
+         sol_sock_res << "keys rmj\n";
+         sol_sock_res.send();
+      }
 
       return 0;
    }
@@ -1019,29 +1036,38 @@ int main(int argc, char *argv[])
       e_0.ProjectCoefficient(e_0_coeff);
 
       // Visualize initial values.
-      VisQuadratureFunction(pmesh, ind_0, "ind_0 QF", 0, 500);
-      VisQuadratureFunction(pmesh, rho_0, "rho_0 QF", 400, 500);
-      socketstream sock;
-      VisualizeField(sock, "localhost", 19916, e_0, "e_0 GF",
-                     800, 500, 400, 400);
+      if (visualization)
+      {
+         VisQuadratureFunction(pmesh, ind_0, "ind_0 QF", 0, 500);
+         VisQuadratureFunction(pmesh, rho_0, "rho_0 QF", 400, 500);
+
+         socketstream sock;
+         VisualizeField(sock, "localhost", 19916, e_0, "e_0 GF",
+                        800, 500, 400, 400);
+      }
 
       // Remap.
       BlockVector ind_rho_e(offset);
       InterpolationRemap interpolator(pmesh);
+      interpolator.visualization = visualization;
       interpolator.SetQuadratureSpace(qspace);
       interpolator.SetEnergyFESpace(pfes);
-      interpolator.RemapIndRhoE(ind_rho_e_0, x_final, ind_rho_e);
+      interpolator.RemapIndRhoE(ind_rho_e_0, x_final,
+                                ind_rho_e, optimization_type);
 
       QuadratureFunction ind(&qspace, ind_rho_e.GetBlock(0).GetData()),
                          rho(&qspace, ind_rho_e.GetBlock(1).GetData());
       ParGridFunction e(&pfes, ind_rho_e.GetBlock(2).GetData());
 
       // Visualize final values.
-      x = x_final;
-      VisQuadratureFunction(pmesh, ind, "ind QF", 0, 500);
-      VisQuadratureFunction(pmesh, rho, "rho QF", 400, 500);
-      socketstream sock_f;
-      VisualizeField(sock_f, "localhost", 19916, e, "e GF", 800, 500, 400, 400);
+      if (visualization)
+      {
+         x = x_final;
+         VisQuadratureFunction(pmesh, ind, "ind QF", 0, 500);
+         VisQuadratureFunction(pmesh, rho, "rho QF", 400, 500);
+         socketstream sock_f;
+         VisualizeField(sock_f, "localhost", 19916, e, "e GF", 800, 500, 400, 400);
+      }
 
       return 0;
    }
