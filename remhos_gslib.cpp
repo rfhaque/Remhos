@@ -163,7 +163,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       const double rtol = 1.e-7;
       double atol = 1.e-7;
       Vector y_out(u_interpolated.Size());
-      //Vector y_in(u_interpolated.Size()); y_in = 1.0;s
+      //Vector y_in(u_interpolated.Size()); y_in = 1.0;
 
       // u_final_min = 0.0;
       // u_final_max = 1.0;
@@ -186,8 +186,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       optsolver->SetPrintLevel(3);
       optsolver->Mult(u_interpolated, y_out);
 
-      // fix parallel. u_interpolated and y_out shoul be true vectors
-
+      // fix parallel. u_interpolated and y_out should be true vectors
       u_interpolated = y_out;
 
       delete optsolver;
@@ -476,9 +475,12 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    rho_0_lor = rho_0;
 
    // Visualize the initial LOR GridFunctions.
-   socketstream sock_ind, sock_rho;
-   VisualizeField(sock_ind, "localhost", 19916, ind_0_lor, "ind_0 LOR", 0, 500, 400, 400);
-   VisualizeField(sock_rho, "localhost", 19916, rho_0_lor, "rho_0 LOR", 400, 500, 400, 400);
+   if (visualization)
+   {
+      socketstream sock_ind, sock_rho;
+      VisualizeField(sock_ind, "localhost", 19916, ind_0_lor, "ind_0 LOR", 0, 500, 400, 400);
+      VisualizeField(sock_rho, "localhost", 19916, rho_0_lor, "rho_0 LOR", 400, 500, 400, 400);
+   }
 
    // Interpolate into ind_rho_e.
    const int quads_cnt = pos_quad_final.Size() / dim;

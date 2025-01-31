@@ -1086,33 +1086,40 @@ int main(int argc, char *argv[])
       QuadratureFunction u_qf(qspace);
       InitializeQuadratureFunction(u0, x0, u_qf);
 
-      osockstream sol_sock(19916, "localhost");
-      sol_sock << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
-      sol_sock << "quadrature\n" << pmesh << u_qf << std::flush;
-      sol_sock << "window_title 'Initial QuadFunc'\n";
-      sol_sock << "window_geometry 400 0 400 400\n";
-      sol_sock << "keys rmj\n";
-      sol_sock.send();
+      if (visualization)
+      {
+         osockstream sol_sock(19916, "localhost");
+         sol_sock << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
+         sol_sock << "quadrature\n" << pmesh << u_qf << std::flush;
+         sol_sock << "window_title 'Initial QuadFunc'\n";
+         sol_sock << "window_geometry 400 0 400 400\n";
+         sol_sock << "keys rmj\n";
+         sol_sock.send();
+      }
 
       QuadratureFunction uu_qf(qspace);
       InterpolationRemap interpolator(pmesh);
+      interpolator.visualization = visualization;
       interpolator.Remap(u_qf, x_final, uu_qf, optimization_type);
 
-      x = x_final;
-      osockstream sol_sock_res(19916, "localhost");
-      sol_sock_res << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
-      sol_sock_res << "quadrature\n" << pmesh << uu_qf << std::flush;
-      sol_sock_res << "window_title 'Remapped QuadFunc'\n";
-      sol_sock_res << "window_geometry 1200 0 400 400\n";
-      sol_sock_res << "keys rmj\n";
-      sol_sock_res.send();
+      if (visualization)
+      {
+         x = x_final;
+         osockstream sol_sock_res(19916, "localhost");
+         sol_sock_res << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
+         sol_sock_res << "quadrature\n" << pmesh << uu_qf << std::flush;
+         sol_sock_res << "window_title 'Remapped QuadFunc'\n";
+         sol_sock_res << "window_geometry 1200 0 400 400\n";
+         sol_sock_res << "keys rmj\n";
+         sol_sock_res.send();
 
-      ParaViewDataCollection pvdc("QFremap_after_opt", &pmesh);
-      pvdc.SetDataFormat(VTKFormat::BINARY32);
-      pvdc.SetCycle(0);
-      pvdc.SetTime(1.0);
-      pvdc.RegisterQField("field", &uu_qf);
-      pvdc.Save();
+         ParaViewDataCollection pvdc("QFremap_after_opt", &pmesh);
+         pvdc.SetDataFormat(VTKFormat::BINARY32);
+         pvdc.SetCycle(0);
+         pvdc.SetTime(1.0);
+         pvdc.RegisterQField("field", &uu_qf);
+         pvdc.Save();
+      }
 
       return 0;
    }
@@ -1149,15 +1156,19 @@ int main(int argc, char *argv[])
       e_0.ProjectCoefficient(e_0_coeff);
 
       // Visualize initial values.
-      VisQuadratureFunction(pmesh, ind_0, "ind_0 QF", 0, 500);
-      VisQuadratureFunction(pmesh, rho_0, "rho_0 QF", 400, 500);
-      socketstream sock;
-      VisualizeField(sock, "localhost", 19916, e_0, "e_0 GF",
-                     800, 500, 400, 400);
+      if (visualization)
+      {
+         VisQuadratureFunction(pmesh, ind_0, "ind_0 QF", 0, 500);
+         VisQuadratureFunction(pmesh, rho_0, "rho_0 QF", 400, 500);
+         socketstream sock;
+         VisualizeField(sock, "localhost", 19916, e_0, "e_0 GF",
+                        800, 500, 400, 400);
+      }
 
       // Remap.
       BlockVector ind_rho_e(offset);
       InterpolationRemap interpolator(pmesh);
+      interpolator.visualization = visualization;
       interpolator.SetQuadratureSpace(qspace);
       interpolator.SetEnergyFESpace(pfes);
       interpolator.RemapIndRhoE(ind_rho_e_0, x_final, ind_rho_e, optimization_type);
@@ -1167,11 +1178,14 @@ int main(int argc, char *argv[])
       ParGridFunction e(&pfes, ind_rho_e.GetBlock(2).GetData());
 
       // Visualize final values.
-      x = x_final;
-      VisQuadratureFunction(pmesh, ind, "ind QF", 0, 500);
-      VisQuadratureFunction(pmesh, rho, "rho QF", 400, 500);
-      socketstream sock_f;
-      VisualizeField(sock_f, "localhost", 19916, e, "e GF", 800, 500, 400, 400);
+      if (visualization)
+      {
+         x = x_final;
+         VisQuadratureFunction(pmesh, ind, "ind QF", 0, 500);
+         VisQuadratureFunction(pmesh, rho, "rho QF", 400, 500);
+         socketstream sock_f;
+         VisualizeField(sock_f, "localhost", 19916, e, "e GF", 800, 500, 400, 400);
+      }
 
       return 0;
    }
