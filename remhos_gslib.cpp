@@ -64,7 +64,7 @@ void VisQuadratureFunction(ParMesh &pmesh, QuadratureFunction &q,
 
 void InterpolationRemap::Remap(const ParGridFunction &u_initial,
                                const ParGridFunction &pos_final,
-                               ParGridFunction &u_final)
+                               ParGridFunction &u_final, int opt_type)
 {
    const int dim = pmesh_init.Dimension();
    MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
@@ -113,11 +113,11 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    // Compute min / max bounds.
    Vector u_final_min, u_final_max;
    CalcDOFBounds(u_initial, pfes_final, pos_final, u_final_min, u_final_max);
-         ParGridFunction gf_min(u_initial), gf_max(u_initial);
-      gf_min = u_final_min, gf_max = u_final_max;
-      
-   if (vis_bounds)
+   if (visualization)
    {
+      ParGridFunction gf_min(u_initial), gf_max(u_initial);
+      gf_min = u_final_min, gf_max = u_final_max;
+
       socketstream vis_min, vis_max;
       char vishost[] = "localhost";
       int  visport   = 19916;
@@ -145,9 +145,8 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       *x = pos_init;
    }
 
-   // Do some optimization here to fix the masses, using the min/max bounds,   
-   
-   if(true)
+   // Optimize to fix the masses, using the min/max bounds,
+   if (opt_type == 1)
    {
       *x = pos_final;
       OptimizationSolver* optsolver = NULL;
@@ -185,7 +184,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       optsolver->SetAbsTol(atol);
       optsolver->SetRelTol(rtol);
       optsolver->SetPrintLevel(3);
-      optsolver->Mult(u_interpolated, y_out);\
+      optsolver->Mult(u_interpolated, y_out);
 
       // fix parallel. u_interpolated and y_out shoul be true vectors
 
@@ -209,7 +208,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
 
 void InterpolationRemap::Remap(const QuadratureFunction &u_0,
                                const ParGridFunction &pos_final,
-                               QuadratureFunction &u)
+                               QuadratureFunction &u, int opt_type)
 {
    const int dim = pmesh_init.Dimension();
    MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
@@ -233,8 +232,11 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    u_0_lor = u_0;
 
    // Visualize the initial LOR GridFunction.
-   socketstream sock;
-   VisualizeField(sock, "localhost", 19916, u_0_lor, "u_0 LOR", 800, 0, 400, 400);
+   if (visualization)
+   {
+      socketstream sock;
+      VisualizeField(sock, "localhost", 19916, u_0_lor, "u_0 LOR", 800, 0, 400, 400);
+   }
 
    // Interpolate u_initial.
    const int quads_cnt = pos_quad_final.Size() / dim;
@@ -258,7 +260,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    // Compute min / max bounds.
    Vector u_min, u_max;
    CalcQuadBounds(u_0, pos_final, u_min, u_max);
-   if (vis_bounds)
+   if (visualization)
    {
       QuadratureFunction gf_min(qspace), gf_max(qspace);
       gf_min = u_min, gf_max = u_max;
@@ -271,6 +273,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
 
    // Optimize u here.
    QuadratureFunction u_desing(u), u_initial(u);
+   if (opt_type == 1)
    {
       OptimizationSolver* optsolver = NULL;
       {
@@ -318,104 +321,9 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    }
 }
 
-void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
-                                      const ParGridFunction &pos_final,
-                                      Vector &ind_rho_e)
-{
-   const int dim = pmesh_init.Dimension();
-   MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
-   MFEM_VERIFY(pfes_e && qspace, "Spaces are not specified.");
-
-   // Extract initial data from the BlockVector.
-   const int size_e = pfes_e->GetNDofs(), size_qf = qspace->GetSize();
-   Vector *ire_ptr = const_cast<Vector *>(&ind_rho_e_0);
-   QuadratureFunction ind_0(qspace, ire_ptr->GetData()),
-                      rho_0(qspace, ire_ptr->GetData() + size_qf);
-   ParGridFunction e_0(pfes_e, ire_ptr->GetData() + 2*size_qf);
-
-   // Generate list of points where ire_initial will be interpolated.
-   Vector pos_dof_final, pos_quad_final;
-   GetDOFPositions(*pfes_e, pos_final, pos_dof_final);
-   GetQuadPositions(*qspace, pos_final, pos_quad_final);
-
-   // Generate the Low-Order-Refined GridFunctions for
-   // interpolating the QuadratureFunctions.
-   const int order = qspace->GetIntRule(0).GetOrder() / 2;
-   const int ref_factor = order + 1;
-   ParMesh pmesh_lor = ParMesh::MakeRefined(pmesh_init, ref_factor,
-                                            BasisType::ClosedGL);
-   L2_FECollection fec_lor(0, dim);
-   ParFiniteElementSpace pfes_lor(&pmesh_lor, &fec_lor);
-   ParGridFunction ind_0_lor(&pfes_lor), rho_0_lor(&pfes_lor);
-   MFEM_VERIFY(ind_0.Size() == ind_0_lor.Size(), "Size mismatch ind LOR.");
-   MFEM_VERIFY(rho_0.Size() == rho_0_lor.Size(), "Size mismatch rho LOR.");
-   ind_0_lor = ind_0;
-   rho_0_lor = rho_0;
-
-   // Visualize the initial LOR GridFunctions.
-   socketstream sock_ind, sock_rho;
-   VisualizeField(sock_ind, "localhost", 19916, ind_0_lor, "ind_0 LOR", 0, 500, 400, 400);
-   VisualizeField(sock_rho, "localhost", 19916, rho_0_lor, "rho_0 LOR", 400, 500, 400, 400);
-
-   // Interpolate into ind_rho_e.
-   const int quads_cnt = pos_quad_final.Size() / dim;
-   const int nodes_cnt = pos_dof_final.Size() / dim;
-   QuadratureFunction ind(qspace, ind_rho_e.GetData()),
-                      rho(qspace, ind_rho_e.GetData() + size_qf);
-   ParGridFunction e(pfes_e, ind_rho_e.GetData() + 2*size_qf);
-   FindPointsGSLIB finder(pmesh_init.GetComm());
-   finder.Setup(pmesh_lor);
-   finder.Interpolate(pos_quad_final, ind_0_lor, ind);
-   finder.Interpolate(pos_quad_final, rho_0_lor, rho);
-   finder.Setup(pmesh_init);
-   finder.Interpolate(pos_dof_final, e_0, e);
-   finder.FreeData();
-
-   // Report conservation errors of ire_final.
-   const double volume_0 = Integrate(*pmesh_init.GetNodes(), &ind_0,
-                                     nullptr, nullptr),
-                volume_f = Integrate(pos_final, &ind,
-                                     nullptr, nullptr),
-                mass_0   = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0,
-                                     nullptr),
-                mass_f   = Integrate(pos_final, &ind, &rho,
-                                     nullptr),
-                energy_0 = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0, &e_0),
-                energy_f = Integrate(pos_final, &ind, &rho, &e);
-   if (pmesh_init.GetMyRank() == 0)
-   {
-      std::cout << "Volume initial: " << volume_0 << std::endl
-                << "Volume final  : " << volume_f << std::endl
-                << "Volume diff   : " << fabs(volume_0 - volume_f) << endl
-                << "Volume diff % : " << fabs(volume_0 - volume_f)/volume_0*100
-                << endl << "*\n"
-                << "Mass initial: " << mass_0 << std::endl
-                << "Mass final  : " << mass_f << std::endl
-                << "Mass diff   : " << fabs(mass_0 - mass_f) << endl
-                << "Mass diff % : " << fabs(mass_0 - mass_f)/mass_0*100
-                << endl << "*\n"
-                << "Energy initial: " << energy_0 << std::endl
-                << "Energy final  : " << energy_f << std::endl
-                << "Energy diff   : " << fabs(energy_0 - energy_f) << endl
-                << "Energy diff % : " << fabs(energy_0 - energy_f)/energy_0*100
-                << endl;
-   }
-
-   // Compute min / max bounds.
-   Vector ind_min, ind_max;
-   CalcQuadBounds(ind_0, pos_final, ind_min, ind_max);
-   Vector rho_min, rho_max;
-   CalcQuadBounds(rho_0, pos_final, rho_min, rho_max);
-   Vector e_min, e_max;
-   CalcDOFBounds(e_0, *pfes_e, pos_final, e_min, e_max);
-
-   // Optimize ire_final here.
-   // ...
-}
-
 void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
                                double mass, const ParGridFunction &pos_final,
-                               ParGridFunction &u)
+                               ParGridFunction &u, int opt_type)
 {
    const int dim = pmesh_init.Dimension();
    MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
@@ -463,7 +371,7 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    FunctionCoefficient coeff(func);
    func_gf.ProjectCoefficient(coeff);
    CalcDOFBounds(func_gf, *u.ParFESpace(), pos_final, u_final_min, u_final_max);
-   if (vis_bounds)
+   if (visualization)
    {
       ParGridFunction gf_min(func_gf), gf_max(func_gf);
       gf_min = u_final_min, gf_max = u_final_max;
@@ -483,6 +391,7 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    }
 
    // Optimize u here.
+   if (opt_type == 1)
    {
       *x = pos_final;
       OptimizationSolver* optsolver = NULL;
@@ -506,14 +415,9 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
       // u_final_min = 0.0;
       // u_final_max = 1.0;
 
-      RhemosHiOpProblem ot_prob(*u.ParFESpace(),
-                                u,
-                                u,
-                                u_final_min,
-                                u_final_max,
-                                mass,
-                                numContraints,
-                                H1SeminormWeight);
+      RhemosHiOpProblem ot_prob(*u.ParFESpace(), u, u,
+                                u_final_min, u_final_max, mass,
+                                numContraints, H1SeminormWeight);
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);
@@ -535,6 +439,101 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
                 << "Mass diff  : " << fabs(mass - mass_f) << endl
                 << "Mass diff %: " << fabs(mass - mass_f)/mass*100 << endl;
    }
+}
+
+void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
+    const ParGridFunction &pos_final,
+    Vector &ind_rho_e, int opt_type)
+{
+   const int dim = pmesh_init.Dimension();
+   MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
+   MFEM_VERIFY(pfes_e && qspace, "Spaces are not specified.");
+
+   // Extract initial data from the BlockVector.
+   const int size_e = pfes_e->GetNDofs(), size_qf = qspace->GetSize();
+   Vector *ire_ptr = const_cast<Vector *>(&ind_rho_e_0);
+   QuadratureFunction ind_0(qspace, ire_ptr->GetData()),
+       rho_0(qspace, ire_ptr->GetData() + size_qf);
+   ParGridFunction e_0(pfes_e, ire_ptr->GetData() + 2*size_qf);
+
+   // Generate list of points where ire_initial will be interpolated.
+   Vector pos_dof_final, pos_quad_final;
+   GetDOFPositions(*pfes_e, pos_final, pos_dof_final);
+   GetQuadPositions(*qspace, pos_final, pos_quad_final);
+
+   // Generate the Low-Order-Refined GridFunctions for
+   // interpolating the QuadratureFunctions.
+   const int order = qspace->GetIntRule(0).GetOrder() / 2;
+   const int ref_factor = order + 1;
+   ParMesh pmesh_lor = ParMesh::MakeRefined(pmesh_init, ref_factor,
+                                            BasisType::ClosedGL);
+   L2_FECollection fec_lor(0, dim);
+   ParFiniteElementSpace pfes_lor(&pmesh_lor, &fec_lor);
+   ParGridFunction ind_0_lor(&pfes_lor), rho_0_lor(&pfes_lor);
+   MFEM_VERIFY(ind_0.Size() == ind_0_lor.Size(), "Size mismatch ind LOR.");
+   MFEM_VERIFY(rho_0.Size() == rho_0_lor.Size(), "Size mismatch rho LOR.");
+   ind_0_lor = ind_0;
+   rho_0_lor = rho_0;
+
+   // Visualize the initial LOR GridFunctions.
+   socketstream sock_ind, sock_rho;
+   VisualizeField(sock_ind, "localhost", 19916, ind_0_lor, "ind_0 LOR", 0, 500, 400, 400);
+   VisualizeField(sock_rho, "localhost", 19916, rho_0_lor, "rho_0 LOR", 400, 500, 400, 400);
+
+   // Interpolate into ind_rho_e.
+   const int quads_cnt = pos_quad_final.Size() / dim;
+   const int nodes_cnt = pos_dof_final.Size() / dim;
+   QuadratureFunction ind(qspace, ind_rho_e.GetData()),
+       rho(qspace, ind_rho_e.GetData() + size_qf);
+   ParGridFunction e(pfes_e, ind_rho_e.GetData() + 2*size_qf);
+   FindPointsGSLIB finder(pmesh_init.GetComm());
+   finder.Setup(pmesh_lor);
+   finder.Interpolate(pos_quad_final, ind_0_lor, ind);
+   finder.Interpolate(pos_quad_final, rho_0_lor, rho);
+   finder.Setup(pmesh_init);
+   finder.Interpolate(pos_dof_final, e_0, e);
+   finder.FreeData();
+
+   // Report conservation errors of ire_final.
+   const double volume_0 = Integrate(*pmesh_init.GetNodes(), &ind_0,
+                                     nullptr, nullptr),
+       volume_f = Integrate(pos_final, &ind,
+                            nullptr, nullptr),
+       mass_0   = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0,
+                          nullptr),
+       mass_f   = Integrate(pos_final, &ind, &rho,
+                          nullptr),
+       energy_0 = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0, &e_0),
+       energy_f = Integrate(pos_final, &ind, &rho, &e);
+   if (pmesh_init.GetMyRank() == 0)
+   {
+      std::cout << "Volume initial: " << volume_0 << std::endl
+                << "Volume final  : " << volume_f << std::endl
+                << "Volume diff   : " << fabs(volume_0 - volume_f) << endl
+                << "Volume diff % : " << fabs(volume_0 - volume_f)/volume_0*100
+                << endl << "*\n"
+                << "Mass initial: " << mass_0 << std::endl
+                << "Mass final  : " << mass_f << std::endl
+                << "Mass diff   : " << fabs(mass_0 - mass_f) << endl
+                << "Mass diff % : " << fabs(mass_0 - mass_f)/mass_0*100
+                << endl << "*\n"
+                << "Energy initial: " << energy_0 << std::endl
+                << "Energy final  : " << energy_f << std::endl
+                << "Energy diff   : " << fabs(energy_0 - energy_f) << endl
+                << "Energy diff % : " << fabs(energy_0 - energy_f)/energy_0*100
+                << endl;
+   }
+
+   // Compute min / max bounds.
+   Vector ind_min, ind_max;
+   CalcQuadBounds(ind_0, pos_final, ind_min, ind_max);
+   Vector rho_min, rho_max;
+   CalcQuadBounds(rho_0, pos_final, rho_min, rho_max);
+   Vector e_min, e_max;
+   CalcDOFBounds(e_0, *pfes_e, pos_final, e_min, e_max);
+
+   // Optimize ire_final here.
+   // ...
 }
 
 void InterpolationRemap::GetDOFPositions(const ParFiniteElementSpace &pfes,
@@ -676,7 +675,7 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
                                        const Vector &pos_final,
                                        Vector &g_min, Vector &g_max)
 {
-   const int size_res = pfes.GetVSize();
+   const int size_res = pfes.GetVSize(), NE = pmesh_init.GetNE();
    g_min.SetSize(size_res);
    g_max.SetSize(size_res);
 
@@ -684,7 +683,7 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
    L2_FECollection fec_L2(0, pmesh_init.Dimension());
    ParFiniteElementSpace pfes_L2(&pmesh_init, &fec_L2);
    ParGridFunction g_el_min(&pfes_L2), g_el_max(&pfes_L2);
-   for (int e = 0; e < pmesh_init.GetNE(); e++)
+   for (int e = 0; e < NE; e++)
    {
       Vector g_vals;
       g_init.GetElementDofValues(e, g_vals);
@@ -700,13 +699,32 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
    finder.Interpolate(pos_nodes_final, g_el_min, g_min);
    finder.Interpolate(pos_nodes_final, g_el_max, g_max);
    finder.FreeData();
+
+   for (int e = 0; e < NE; e++)
+   {
+      Array<int> dofs;
+      pfes.GetElementDofs(e, dofs);
+      const int s = dofs.Size();
+
+      Vector g_vals;
+      g_min.GetSubVector(dofs, g_vals);
+      const double minv = g_vals.Min();
+      g_max.GetSubVector(dofs, g_vals);
+      const double maxv = g_vals.Max();
+
+      for (int i = 0; i < s; i++)
+      {
+         g_min(s * e + i) = minv;
+         g_max(s * e + i) = maxv;
+      }
+   }
 }
 
 void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
                                         const Vector &pos_final,
                                         Vector &g_min, Vector &g_max)
 {
-   const int size_res = qf_init.Size();
+   const int size_res = qf_init.Size(), NE = pmesh_init.GetNE();
    g_min.SetSize(size_res);
    g_max.SetSize(size_res);
 
@@ -714,7 +732,7 @@ void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
    L2_FECollection fec_L2(0, pmesh_init.Dimension());
    ParFiniteElementSpace pfes_L2(&pmesh_init, &fec_L2);
    ParGridFunction g_el_min(&pfes_L2), g_el_max(&pfes_L2);
-   for (int e = 0; e < pmesh_init.GetNE(); e++)
+   for (int e = 0; e < NE; e++)
    {
       Vector q_vals;
       qf_init.GetValues(e, q_vals);
@@ -731,6 +749,28 @@ void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
    finder.Interpolate(pos_quads_final, g_el_min, g_min);
    finder.Interpolate(pos_quads_final, g_el_max, g_max);
    finder.FreeData();
+
+   int el_e_idx = 0;
+   for (int e = 0; e < NE; e++)
+   {
+      const IntegrationRule &ir = qspace->GetElementIntRule(e);
+      const int nqp = ir.GetNPoints();
+
+      double minv = g_min(el_e_idx), maxv = g_max(el_e_idx);
+      for (int q = 1; q < nqp; q++)
+      {
+         minv = fmin(minv, g_min(el_e_idx + q));
+         maxv = fmax(maxv, g_max(el_e_idx + q));
+      }
+
+      for (int q = 0; q < nqp; q++)
+      {
+         g_min(el_e_idx + q) = minv;
+         g_max(el_e_idx + q) = maxv;
+      }
+
+      el_e_idx += nqp;
+   }
 }
 
 } // namespace mfem
