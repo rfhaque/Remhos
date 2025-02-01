@@ -85,23 +85,26 @@ public:
 
    // Remap of an L2 ParGridFunction.
    void Remap(const ParGridFunction &u_initial,
-              const ParGridFunction &pos_final, ParGridFunction &u_final);
+              const ParGridFunction &pos_final, ParGridFunction &u_final,
+              int opt_type);
 
    // Remap of a QuadratureFunction.
    void Remap(const QuadratureFunction &u_0,
-              const ParGridFunction &pos_final, QuadratureFunction &u_final);
+              const ParGridFunction &pos_final, QuadratureFunction &u_final,
+              int opt_type);
 
    // Remap of an analytic function.
    // Same as projecting the function to the final mesh.
    void Remap(std::function<real_t(const Vector &)> func, double mass,
-              const ParGridFunction &pos_final, ParGridFunction &u_final);
+              const ParGridFunction &pos_final, ParGridFunction &u_final,
+              int opt_type);
 
    // Remap of coupled indicator, density, specific internal energy for
    // single material (no voupling between materials).
    void RemapIndRhoE(const Vector ind_rho_e_0, const ParGridFunction &pos_final,
-                     Vector &ind_rho_e);
+                     Vector &ind_rho_e, int opt_type);
 
-   bool vis_bounds = true;
+   bool visualization = true;
 };
 
 } // namespace mfem
