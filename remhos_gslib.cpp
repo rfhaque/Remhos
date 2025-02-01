@@ -105,14 +105,16 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    u_interpolated_initial = interp_vals;
 
    // Report masses.
-   double mass_s = Mass(*pmesh_init.GetNodes(), u_initial),
-          mass_t = Mass(pos_final, u_interpolated);
+   double mass_0 = Mass(*pmesh_init.GetNodes(), u_initial),
+          mass_f = Mass(pos_final, u_interpolated);
    if (pmesh_init.GetMyRank() == 0)
    {
-      std::cout << "Mass initial: " << mass_s << std::endl
-                << "Mass interp : " << mass_t << std::endl
-                << "Mass diff   : " << fabs(mass_s - mass_t) << endl
-                << "Mass diff % : " << fabs(mass_s - mass_t)/mass_s*100 << endl;
+      std::cout << "Mass initial (old mesh):  " << mass_0 << std::endl
+                << "Mass interpolated:        " << mass_f << std::endl
+                << "Mass interpolated diff:   "
+                << fabs(mass_0 - mass_f) << endl
+                << "Mass interpolated diff %: "
+                << fabs(mass_0 - mass_f) / mass_0 * 100 << endl;
    }
 
    // Compute min / max bounds.
@@ -186,7 +188,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
                                  u_interpolated,
                                  u_final_min,
                                  u_final_max, 
-                                 mass_s,
+                                 mass_0,
                                  numContraints,
                                  H1SeminormWeight);
       optsolver->SetOptimizationProblem(ot_prob);
@@ -204,19 +206,20 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    }
    else if (opt_type == 2)
    {
-      MDSolver md(pfes_tmp, mass_s, u_interpolated, u_final_min, u_final_max);
+      MDSolver md(pfes_tmp, mass_0, u_interpolated, u_final_min, u_final_max);
       md.Optimize(1000, 1000, 1000);
       md.SetFinal(u_final);
    }
 
    // Report masses.
-   const double mass_f = Mass(pos_final, u_final);
+   mass_f = Mass(pos_final, u_final);
    if (pmesh_init.GetMyRank() == 0)
    {
-      std::cout << "Mass initial: " << mass_s << std::endl
-                << "Mass final  : " << mass_f << std::endl
-                << "Mass diff  : " << fabs(mass_s - mass_f) << endl
-                << "Mass diff %: " << fabs(mass_s - mass_f)/mass_s*100 << endl;
+      std::cout << "Mass optimized:           " << mass_f << std::endl
+                << "Mass optimized diff:      "
+                << fabs(mass_0 - mass_f) << endl
+                << "Mass optimized diff %:    "
+                << fabs(mass_0 - mass_f) / mass_0 * 100 << endl;
    }
 }
 
@@ -262,15 +265,17 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    finder.FreeData();
 
    // Report mass error.
-   const double mass_0 = Integrate(*pmesh_init.GetNodes(), &u_0,
-                                   nullptr, nullptr);
-   double mass_f = Integrate(pos_final, &u, nullptr, nullptr);
+   double mass_0 = Integrate(*pmesh_init.GetNodes(), &u_0,
+                             nullptr, nullptr),
+          mass_f = Integrate(pos_final, &u, nullptr, nullptr);
    if (pmesh_init.GetMyRank() == 0)
    {
-      std::cout << "Mass initial: " << mass_0 << std::endl
-                << "Mass final  : " << mass_f << std::endl
-                << "Mass diff   : " << fabs(mass_0 - mass_f) << endl
-                << "Mass diff % : " << fabs(mass_0 - mass_f)/mass_0*100 << endl;
+      std::cout << "Mass initial (old mesh):  " << mass_0 << std::endl
+                << "Mass interpolated:        " << mass_f << std::endl
+                << "Mass interpolated diff:   "
+                << fabs(mass_0 - mass_f) << endl
+                << "Mass interpolated diff %: "
+                << fabs(mass_0 - mass_f)/mass_0*100 << endl;
    }
 
    // Compute min / max bounds.
@@ -340,10 +345,11 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    mass_f = Integrate(pos_final, &u, nullptr, nullptr);
    if (pmesh_init.GetMyRank() == 0)
    {
-      std::cout << "Mass initial: " << mass_0 << std::endl
-                << "Mass final  : " << mass_f << std::endl
-                << "Mass diff   : " << fabs(mass_0 - mass_f) << endl
-                << "Mass diff % : " << fabs(mass_0 - mass_f)/mass_0*100 << endl;
+      std::cout << "Mass optimized:           " << mass_f << std::endl
+                << "Mass optimized diff:      "
+                << fabs(mass_0 - mass_f) << endl
+                << "Mass optimized diff %:    "
+                << fabs(mass_0 - mass_f)/mass_0*100 << endl;
    }
 }
 
@@ -387,10 +393,12 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    double mass_f = Mass(pos_final, u);
    if (pmesh_init.GetMyRank() == 0)
    {
-      std::cout << "Mass initial: " << mass   << std::endl
-                << "Mass final  : " << mass_f << std::endl
-                << "Mass diff  : " << fabs(mass - mass_f) << endl
-                << "Mass diff %: " << fabs(mass - mass_f)/mass*100 << endl;
+      std::cout << "Mass initial (analytic):  " << mass   << std::endl
+                << "Mass interpolated:        " << mass_f << std::endl
+                << "Mass interpolated diff:   "
+                << fabs(mass - mass_f) << endl
+                << "Mass interpolated diff %: "
+                << fabs(mass - mass_f) / mass * 100 << endl;
    }
 
    // Compute min / max bounds.
@@ -474,10 +482,11 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    mass_f = Mass(pos_final, u);
    if (pmesh_init.GetMyRank() == 0)
    {
-      std::cout << "Mass initial: " << mass << std::endl
-                << "Mass final  : " << mass_f << std::endl
-                << "Mass diff   : " << fabs(mass - mass_f) << endl
-                << "Mass diff % : " << fabs(mass - mass_f)/mass*100 << endl;
+      std::cout << "Mass optimized:           " << mass_f << std::endl
+                << "Mass optimized diff:      "
+                << fabs(mass - mass_f) << endl
+                << "Mass optimized diff %:    "
+                << fabs(mass - mass_f) / mass * 100 << endl;
    }
 }
 
@@ -548,20 +557,26 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
        energy_f = Integrate(pos_final, &ind, &rho, &e);
    if (pmesh_init.GetMyRank() == 0)
    {
-      std::cout << "Volume initial: " << volume_0 << std::endl
-                << "Volume final  : " << volume_f << std::endl
-                << "Volume diff   : " << fabs(volume_0 - volume_f) << endl
-                << "Volume diff % : " << fabs(volume_0 - volume_f)/volume_0*100
+      std::cout << "Volume initial:             " << volume_0 << std::endl
+                << "Volume interpolated:        " << volume_f << std::endl
+                << "Volume interpolated diff:   "
+                << fabs(volume_0 - volume_f) << endl
+                << "Volume interpolated diff %: "
+                << fabs(volume_0 - volume_f) / volume_0 * 100
                 << endl << "*\n"
-                << "Mass initial: " << mass_0 << std::endl
-                << "Mass final  : " << mass_f << std::endl
-                << "Mass diff   : " << fabs(mass_0 - mass_f) << endl
-                << "Mass diff % : " << fabs(mass_0 - mass_f)/mass_0*100
+                << "Mass initial:               " << mass_0 << std::endl
+                << "Mass interpolated:          " << mass_f << std::endl
+                << "Mass interpolated diff:     "
+                << fabs(mass_0 - mass_f) << endl
+                << "Mass interpolated diff %: "
+                << fabs(mass_0 - mass_f) / mass_0 * 100
                 << endl << "*\n"
-                << "Energy initial: " << energy_0 << std::endl
-                << "Energy final  : " << energy_f << std::endl
-                << "Energy diff   : " << fabs(energy_0 - energy_f) << endl
-                << "Energy diff % : " << fabs(energy_0 - energy_f)/energy_0*100
+                << "Energy initial:             " << energy_0 << std::endl
+                << "Energy interpolated:        " << energy_f << std::endl
+                << "Energy interpolated diff:   "
+                << fabs(energy_0 - energy_f) << endl
+                << "Energy interpolated diff %: "
+                << fabs(energy_0 - energy_f) / energy_0 * 100
                 << endl;
    }
 
