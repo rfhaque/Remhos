@@ -123,10 +123,13 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       *x = pos_init;
    }
 
-   MDSolver md(pfes_tmp, mass_s, u_interpolated, u_final_min, u_final_max);
-
-   md.Optimize(1000,1000,1000);
-   md.SetFinal(u_final);
+   u_final = u_interpolated;
+   if (opt_type == 2)
+   {
+      MDSolver md(pfes_tmp, mass_s, u_interpolated, u_final_min, u_final_max);
+      md.Optimize(1000, 1000, 1000);
+      md.SetFinal(u_final);
+   }
 
    // Report masses.
    const double mass_f = Mass(pos_final, u_final);
@@ -207,11 +210,14 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       *x = pos_init;
    }
 
-   QuadratureFunction u_target(u);
-   QDSolver qd(qspace_tmp, mass_0, u_target, u_min, u_max);
+   if (opt_type == 2)
+   {
+      QuadratureFunction u_target(u);
+      QDSolver qd(qspace_tmp, mass_0, u_target, u_min, u_max);
 
-   qd.Optimize(1000,1000,1000);
-   qd.SetFinal(u);
+      qd.Optimize(1000, 1000, 1000);
+      qd.SetFinal(u);
+   }
 
    // Report final masses.
    mass_f = Integrate(pos_final, &u, nullptr, nullptr);
@@ -296,11 +302,14 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
       *x = pos_init;
    }
 
-   ParGridFunction u_interpolated(u);
-   MDSolver md(pfes_tmp, mass, u_interpolated, u_final_min, u_final_max);
+   if (opt_type == 2)
+   {
+      ParGridFunction u_interpolated(u);
+      MDSolver md(pfes_tmp, mass, u_interpolated, u_final_min, u_final_max);
 
-   md.Optimize(5,1000,1000);
-   md.SetFinal(u);
+      md.Optimize(5, 1000, 1000);
+      md.SetFinal(u);
+   }
 
    // Report masses.
    mass_f = Mass(pos_final, u);
