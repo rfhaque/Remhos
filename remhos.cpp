@@ -994,7 +994,7 @@ int main(int argc, char *argv[])
       QuadratureFunction uu_qf(qspace);
       InterpolationRemap interpolator(pmesh);
       interpolator.visualization = visualization;
-      interpolator.Remap(u_qf, x_final, uu_qf, optimization_type);
+      interpolator.Remap(u_qf, x_final, uu_qf, optimization_type, order);
 
       if (visualization)
       {
@@ -1100,7 +1100,7 @@ int main(int argc, char *argv[])
       QuadratureFunction uu_qf(qspace);
       InterpolationRemap interpolator(pmesh);
       interpolator.visualization = visualization;
-      interpolator.Remap(u_qf, x_final, uu_qf, optimization_type);
+      interpolator.Remap(u_qf, x_final, uu_qf, optimization_type, order);
 
       if (visualization)
       {

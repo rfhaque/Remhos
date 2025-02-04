@@ -91,7 +91,7 @@ public:
    // Remap of a QuadratureFunction.
    void Remap(const QuadratureFunction &u_0,
               const ParGridFunction &pos_final, QuadratureFunction &u_final,
-              int opt_type);
+              int opt_type, int order);
 
    // Remap of an analytic function.
    // Same as projecting the function to the final mesh.
