@@ -221,12 +221,17 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       LVPP_BoxOptimizer optsolver(obj, 1e-08, 10000);
       ParLinearForm int_vol(&pfes_tmp);
       int_vol.AddDomainIntegrator(new DomainLFIntegrator(mapped_u));
-      optsolver.SetVolumeConstrant(int_vol, mass_0);
+      std::function<real_t(const Vector &x)> func_volume = [&int_vol](const Vector &x)
+      {
+         int_vol.Assemble();
+         real_t vol = int_vol.Sum();
+         MPI_Allreduce(MPI_IN_PLACE, &vol, 1, MFEM_MPI_REAL_T, MPI_SUM,
+                       int_vol.ParFESpace()->GetComm());
+         return vol;
+      };
+      optsolver.SetVolumeConstraint(func_volume, mass_0);
       optsolver.Optimize(psi);
       u_final.ProjectCoefficient(mapped_u);
-      /* MDSolver md(pfes_tmp, mass_0, u_interpolated, u_final_min, u_final_max); */
-      /* md.Optimize(1000, 1000, 1000); */
-      /* md.SetFinal(u_final); */
    }
 
    // Report masses.
@@ -369,13 +374,26 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       LVPP_L2Objective obj(pfes_tmp, psi, targ_coeff, u_final_min_coeff,
                            u_final_max_coeff, &qspace->GetIntRule(0));
       LVPP_BoxOptimizer optsolver(obj, 1e-08, 100);
-      ParLinearForm int_vol(&pfes_tmp);
-      int_vol.AddDomainIntegrator(new DomainLFIntegrator(mapped_u,
-                                                         &qspace->GetIntRule(0)));
-      optsolver.SetVolumeConstrant(int_vol, mass_0);
+      QuadratureFunction vol_qf(qspace);
+      std::function<real_t(const Vector&)> func_volume = [&vol_qf, &psi, &u_final_min,
+                                                                   &u_final_max](const Vector &x)
+      {
+         vol_qf.ProjectGridFunction(psi);
+         for (int i=0; i<vol_qf.Size(); i++)
+         {
+            vol_qf[i] = u_final_min[i] + (u_final_max[i] - u_final_min[i]) * sigmoid(
+                           vol_qf[i]);
+         }
+         return vol_qf.Integrate();
+      };
+
+      /* ParLinearForm int_vol(&pfes_tmp); */
+      /* int_vol.AddDomainIntegrator(new DomainLFIntegrator(mapped_u, */
+      /*                                                    &qspace->GetIntRule(0))); */
+      optsolver.SetVolumeConstraint(func_volume, mass_0);
       optsolver.Optimize(psi);
       u.ProjectGridFunction(psi);
-      for(int i=0; i<u.Size(); i++)
+      for (int i=0; i<u.Size(); i++)
       {
          u[i] = u_min[i] + (u_max[i] - u_min[i]) * sigmoid(u[i]);
       }
@@ -512,11 +530,29 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    }
    else if (opt_type == 2)
    {
-      ParGridFunction u_interpolated(u);
-      MDSolver md(pfes_tmp, mass, u_interpolated, u_final_min, u_final_max);
-
-      md.Optimize(5, 1000, 1000);
-      md.SetFinal(u);
+      ParGridFunction u_final_min_gf(&pfes_tmp, u_final_min);
+      ParGridFunction u_final_max_gf(&pfes_tmp, u_final_max);
+      GridFunctionCoefficient u_final_min_coeff(&u_final_min_gf);
+      GridFunctionCoefficient u_final_max_coeff(&u_final_max_gf);
+      ParGridFunction psi(&pfes_tmp);
+      psi = 0.0;
+      LVPP_BoxCoeff mapped_u(psi, u_final_min_coeff, u_final_max_coeff);
+      LVPP_L2Objective obj(pfes_tmp, psi, coeff, u_final_min_coeff,
+                           u_final_max_coeff);
+      LVPP_BoxOptimizer optsolver(obj, 1e-08, 10000);
+      ParLinearForm int_vol(&pfes_tmp);
+      int_vol.AddDomainIntegrator(new DomainLFIntegrator(mapped_u));
+      std::function<real_t(const Vector &x)> func_volume = [&int_vol](const Vector &x)
+      {
+         int_vol.Assemble();
+         real_t vol = int_vol.Sum();
+         MPI_Allreduce(MPI_IN_PLACE, &vol, 1, MFEM_MPI_REAL_T, MPI_SUM,
+                       int_vol.ParFESpace()->GetComm());
+         return vol;
+      };
+      optsolver.SetVolumeConstraint(func_volume, mass);
+      optsolver.Optimize(psi);
+      u.ProjectCoefficient(mapped_u);
    }
 
    // Report masses.

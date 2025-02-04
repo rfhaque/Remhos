@@ -394,14 +394,18 @@ public:
    QuadratureFunction *vol_qf;
    real_t targ_vol;
    real_t step_size;
+   std::function<real_t(const Vector &)> *func_volume;
 public:
    LVPP_BoxOptimizer(DifferentiableObjective &obj, real_t tol, int max_it)
       :obj(obj), tol(tol), max_it(max_it), grad(obj.Width()),
        H_invGrad(obj.Width()) { }
-   void SetVolumeConstrant(ParLinearForm &int_volume, real_t targ_volume)
-   { int_vol = &int_volume; targ_vol = targ_volume; }
-   /* void SetVolumeConstrant(QuadratureFunction &volume_qf, real_t targ_volume) */
-   /* { vol_qf = &volume_qf; targ_vol = targ_volume; QuadratureFunctionCoefficient qfcf(volume_qf);} */
+   /* void SetVolumeConstrant(ParLinearForm &int_volume, real_t targ_volume) */
+   /* { int_vol = &int_volume; targ_vol = targ_volume; } */
+   void SetVolumeConstraint(std::function<real_t(const Vector &)> &int_volume, real_t targ_volume)
+   {
+      func_volume = &int_volume;
+      targ_vol = targ_volume;
+   }
 
    void Step(Vector &x)
    {
@@ -420,22 +424,27 @@ public:
       MPI_Allreduce(MPI_IN_PLACE, &minval, 1, MFEM_MPI_REAL_T, MPI_MIN,
                     comm);
       x += step_size*maxval;
-      int_vol->Assemble();
-      real_t upper = InnerProduct(*int_vol, x);
-      MPI_Allreduce(MPI_IN_PLACE, &upper, 1, MFEM_MPI_REAL_T, MPI_SUM, comm);
+      /* int_vol->Assemble(); */
+      /* real_t upper = InnerProduct(*int_vol, x); */
+      /* MPI_Allreduce(MPI_IN_PLACE, &upper, 1, MFEM_MPI_REAL_T, MPI_SUM, comm); */
+      real_t upper = (*func_volume)(x);
+
       x += step_size*(minval - maxval);
-      int_vol->Assemble();
-      real_t lower = InnerProduct(*int_vol, x);
-      MPI_Allreduce(MPI_IN_PLACE, &lower, 1, MFEM_MPI_REAL_T, MPI_SUM, comm);
+      /* int_vol->Assemble(); */
+      /* real_t lower = InnerProduct(*int_vol, x); */
+      /* MPI_Allreduce(MPI_IN_PLACE, &lower, 1, MFEM_MPI_REAL_T, MPI_SUM, comm); */
+      real_t lower = (*func_volume)(x);
+
       real_t dc = (maxval - minval)*0.5;
       x -= step_size*minval;
       // bisection
       real_t vol;
       while (dc > 1e-10)
       {
-         int_vol->Assemble();
-         vol = InnerProduct(*int_vol, x);
-         MPI_Allreduce(MPI_IN_PLACE, &vol, 1, MFEM_MPI_REAL_T, MPI_SUM, comm);
+         /* int_vol->Assemble(); */
+         /* vol = InnerProduct(*int_vol, x); */
+         /* MPI_Allreduce(MPI_IN_PLACE, &vol, 1, MFEM_MPI_REAL_T, MPI_SUM, comm); */
+         vol = (*func_volume)(x);
          if (vol > targ_vol)
          {
             x -= step_size*dc;
