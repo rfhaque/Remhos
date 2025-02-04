@@ -231,7 +231,8 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       };
       optsolver.SetVolumeConstraint(func_volume, mass_0);
       optsolver.Optimize(psi);
-      u_final.ProjectCoefficient(mapped_u);
+      L2Projector projector(pfes_tmp);
+      projector.Project(mapped_u, u_final);
    }
 
    // Report masses.
@@ -373,7 +374,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       LVPP_BoxCoeff mapped_u(psi, u_final_min_coeff, u_final_max_coeff);
       LVPP_L2Objective obj(pfes_tmp, psi, targ_coeff, u_final_min_coeff,
                            u_final_max_coeff, &qspace->GetIntRule(0));
-      LVPP_BoxOptimizer optsolver(obj, 1e-08, 100);
+      LVPP_BoxOptimizer optsolver(obj, 1e-08, 10000);
       QuadratureFunction vol_qf(qspace);
       std::function<real_t(const Vector&)> func_volume = [&vol_qf, &psi, &u_final_min,
                                                                    &u_final_max](const Vector &x)
@@ -552,7 +553,8 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
       };
       optsolver.SetVolumeConstraint(func_volume, mass);
       optsolver.Optimize(psi);
-      u.ProjectCoefficient(mapped_u);
+      L2Projector projector(pfes_tmp);
+      projector.Project(mapped_u, u);
    }
 
    // Report masses.
