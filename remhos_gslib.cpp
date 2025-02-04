@@ -119,7 +119,8 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
 
    // Compute min / max bounds.
    Vector u_final_min, u_final_max;
-   CalcDOFBounds(u_initial, pfes_final, pos_final, u_final_min, u_final_max);
+   CalcDOFBounds(u_initial, pfes_final, pos_final,
+                 u_final_min, u_final_max, false);
    if (visualization)
    {
       ParGridFunction gf_min(u_initial), gf_max(u_initial);
@@ -165,21 +166,17 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       OptimizationSolver* optsolver = NULL;
       {
 #ifdef MFEM_USE_HIOP
-         HiopNlpOptimizer *tmp_opt_ptr = new HiopNlpOptimizer(MPI_COMM_WORLD);
-         optsolver = tmp_opt_ptr;
+         optsolver = new HiopNlpOptimizer(MPI_COMM_WORLD);
 #else
          MFEM_ABORT("MFEM is not built with HiOp support!");
 #endif
       }
 
-      const int max_iter = 100;
+      const int max_iter = 20;
       const double rtol = 1.e-7;
       double atol = 1.e-7;
       Vector y_out(u_interpolated.Size());
-      //Vector y_in(u_interpolated.Size()); y_in = 1.0;
 
-      // u_final_min = 0.0;
-      // u_final_max = 1.0;
       int numContraints = 1;
       double H1SeminormWeight = 0.0;
 
@@ -407,7 +404,8 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    ParGridFunction func_gf(u.ParFESpace());
    FunctionCoefficient coeff(func);
    func_gf.ProjectCoefficient(coeff);
-   CalcDOFBounds(func_gf, *u.ParFESpace(), pos_final, u_final_min, u_final_max);
+   CalcDOFBounds(func_gf, *u.ParFESpace(), pos_final,
+                 u_final_min, u_final_max, true);
    if (visualization)
    {
       ParGridFunction gf_min(func_gf), gf_max(func_gf);
@@ -474,7 +472,7 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
       ParGridFunction u_interpolated(u);
       MDSolver md(pfes_tmp, mass, u_interpolated, u_final_min, u_final_max);
 
-      md.Optimize(5, 1000, 1000);
+      md.Optimize(100, 1000, 1000);
       md.SetFinal(u);
    }
 
@@ -586,7 +584,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    Vector rho_min, rho_max;
    CalcQuadBounds(rho_0, pos_final, rho_min, rho_max);
    Vector e_min, e_max;
-   CalcDOFBounds(e_0, *pfes_e, pos_final, e_min, e_max);
+   CalcDOFBounds(e_0, *pfes_e, pos_final, e_min, e_max, true);
 
    // Optimize ire_final here.
    // ...
@@ -729,7 +727,8 @@ double InterpolationRemap::Integrate(const Vector &pos,
 void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
                                        const ParFiniteElementSpace &pfes,
                                        const Vector &pos_final,
-                                       Vector &g_min, Vector &g_max)
+                                       Vector &g_min, Vector &g_max,
+                                       bool use_nbr)
 {
    const int size_res = pfes.GetVSize(), NE = pmesh_init.GetNE();
    g_min.SetSize(size_res);
@@ -756,22 +755,25 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
    finder.Interpolate(pos_nodes_final, g_el_max, g_max);
    finder.FreeData();
 
-   for (int e = 0; e < NE; e++)
+   if (use_nbr)
    {
-      Array<int> dofs;
-      pfes.GetElementDofs(e, dofs);
-      const int s = dofs.Size();
-
-      Vector g_vals;
-      g_min.GetSubVector(dofs, g_vals);
-      const double minv = g_vals.Min();
-      g_max.GetSubVector(dofs, g_vals);
-      const double maxv = g_vals.Max();
-
-      for (int i = 0; i < s; i++)
+      for (int e = 0; e < NE; e++)
       {
-         g_min(s * e + i) = minv;
-         g_max(s * e + i) = maxv;
+         Array<int> dofs;
+         pfes.GetElementDofs(e, dofs);
+         const int s = dofs.Size();
+
+         Vector g_vals;
+         g_min.GetSubVector(dofs, g_vals);
+         const double minv = g_vals.Min();
+         g_max.GetSubVector(dofs, g_vals);
+         const double maxv = g_vals.Max();
+
+         for (int i = 0; i < s; i++)
+         {
+            g_min(s * e + i) = minv;
+            g_max(s * e + i) = maxv;
+         }
       }
    }
 }

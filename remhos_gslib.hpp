@@ -67,7 +67,7 @@ private:
    void CalcDOFBounds(const ParGridFunction &g_init,
                       const ParFiniteElementSpace &pfes,
                       const Vector &pos_final,
-                      Vector &g_min, Vector &g_max);
+                      Vector &g_min, Vector &g_max, bool use_nbr);
    // Computes bounds for quadrature values, at the mesh positions given
    // by pos_final. The bounds are determined by the values of qf_init, which
    // is defined with respect on the initial mesh.
