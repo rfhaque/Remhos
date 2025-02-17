@@ -177,20 +177,11 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       const double atol = 1.e-7;
       Vector y_out(u_interpolated.Size());
 
-      double H1SeminormWeight = 0.0;
-      if (h1_seminorm)
-      {
-         double dx = pmesh_final.GetElementSize(0, 0);
-         MPI_Allreduce(MPI_IN_PLACE, &dx, 1, MPI_DOUBLE,
-                       MPI_MIN, pfes_final.GetComm());
-         H1SeminormWeight = dx * dx;
-      }
-
       const int numContraints = 1;
-      RhemosHiOpProblem ot_prob(pfes_final,
+      RemhosHiOpProblem ot_prob(pfes_final,
                                 u_interpolated_initial, u_interpolated,
                                 u_final_min, u_final_max,
-                                mass_0, numContraints, H1SeminormWeight);
+                                mass_0, numContraints, h1_seminorm);
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);
@@ -316,10 +307,10 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       const int numContraints = 1;
       const double H1SeminormWeight = 0.0;
 
-      RhemosQuadHiOpProblem ot_prob(*qspace, pos_final,
+      RemhosQuadHiOpProblem ot_prob(*qspace, pos_final,
                                     u_initial, u_desing,
                                     u_min, u_max, mass_0,
-                                    numContraints, H1SeminormWeight);
+                                    numContraints, h1_seminorm);
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);
@@ -450,14 +441,10 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
       Vector y_out(u.Size());
 
       const int numContraints = 1;
-      const double H1SeminormWeight = 0.0;
 
-      // u_final_min = 0.0;
-      // u_final_max = 1.0;
-
-      RhemosHiOpProblem ot_prob(*u.ParFESpace(), u, u,
+      RemhosHiOpProblem ot_prob(*u.ParFESpace(), u, u,
                                 u_final_min, u_final_max, mass,
-                                numContraints, H1SeminormWeight);
+                                numContraints, h1_seminorm);
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);

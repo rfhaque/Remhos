@@ -22,7 +22,7 @@
 namespace mfem
 {
 
-class RhemosHiOpProblem : public OptimizationProblem
+class RemhosHiOpProblem : public OptimizationProblem
 {
 private:
    const ParGridFunction x_initial;
@@ -31,27 +31,35 @@ private:
    Vector d_lo, d_hi, massvec;
 
    double targetMass;
-   double H1semiNormweight_;
+   double H1SemiNormWeight = 0.0;
 
 public:
-   RhemosHiOpProblem(ParFiniteElementSpace &space,
+   RemhosHiOpProblem(ParFiniteElementSpace &space,
                      const ParGridFunction &u_initial,
                      const Vector &design_Var,
                      const Vector &xmin, 
                      const Vector &xmax, 
                      double initalmass,
                      int numConstraints_,
-                     double H1semiNormweight)
+                     bool use_H1_semi)
       : OptimizationProblem(design_Var.Size(), NULL, NULL),
         x_initial(u_initial), fespace(space), designVar(design_Var),
-        d_lo(numConstraints_), d_hi(numConstraints_), massvec(numConstraints_), targetMass(initalmass), H1semiNormweight_(H1semiNormweight)
+        d_lo(numConstraints_), d_hi(numConstraints_), massvec(numConstraints_),
+        targetMass(initalmass)
    {
-
       numConstraints = numConstraints_;
       SetEqualityConstraint(massvec);
       // SetInequalityConstraint(d_lo, d_hi);
 
       SetSolutionBounds(xmin, xmax);
+
+      if (use_H1_semi)
+      {
+         double dx = space.GetMesh()->GetElementSize(0, 0);
+         MPI_Allreduce(MPI_IN_PLACE, &dx, 1, MPI_DOUBLE,
+                       MPI_MIN, space.GetComm());
+         H1SemiNormWeight = dx * dx;
+      }
    }
 
    virtual double CalcObjective(const Vector &x) const
@@ -72,7 +80,7 @@ public:
       VectorSumCoefficient new_minus_old_coeff(GradientCoeff_new, GradientCoeff_old, 1.0, -1.0);
 
       InnerProductCoefficient innerProductCoeff(new_minus_old_coeff,new_minus_old_coeff);
-      ProductCoefficient H1SemiNormCoeff(H1semiNormweight_, innerProductCoeff);
+      ProductCoefficient H1SemiNormCoeff(H1SemiNormWeight, innerProductCoeff);
 
       auto *lfi_1 = new DomainLFIntegrator(half_x_diff_coeffsquared);
       auto *lfi_2 = new DomainLFIntegrator(H1SemiNormCoeff);
@@ -101,7 +109,7 @@ public:
       	GradientGridFunctionCoefficient GradientCoeff_old(&x_initial);
       VectorSumCoefficient new_minus_old_coeff(GradientCoeff_new, GradientCoeff_old, 1.0, -1.0);
 
-       	ScalarVectorProductCoefficient a_timesB(H1semiNormweight_*2.0, new_minus_old_coeff );
+         ScalarVectorProductCoefficient a_timesB(H1SemiNormWeight*2.0, new_minus_old_coeff );
 
 
       auto *lfi_1 = new DomainLFIntegrator(x_diff_coeff);
@@ -192,7 +200,7 @@ private:
    
 };
 
-class RhemosQuadHiOpProblem : public OptimizationProblem
+class RemhosQuadHiOpProblem : public OptimizationProblem
 {
 private:
    const QuadratureFunction x_initial;
@@ -202,10 +210,10 @@ private:
    Vector d_lo, d_hi, massvec;
 
    double targetMass;
-   double H1semiNormweight_;
+   double H1SemiNormWeight = 0.0;
 
 public:
-   RhemosQuadHiOpProblem(QuadratureSpace &space,
+   RemhosQuadHiOpProblem(QuadratureSpace &space,
                      const ParGridFunction &pos_final_,
                      const QuadratureFunction &u_initial,
                      const QuadratureFunction &design_Var,
@@ -213,10 +221,11 @@ public:
                      const Vector &xmax, 
                      double initalmass,
                      int numConstraints_,
-                     double H1semiNormweight)
+                     bool use_H1_semi)
       : OptimizationProblem(design_Var.Size(), NULL, NULL),
         x_initial(u_initial), pos_final(pos_final_), qspace(space), designVar(design_Var),
-        d_lo(numConstraints_), d_hi(numConstraints_), massvec(numConstraints_), targetMass(initalmass), H1semiNormweight_(H1semiNormweight)
+        d_lo(numConstraints_), d_hi(numConstraints_), massvec(numConstraints_),
+        targetMass(initalmass)
    {
 
       numConstraints = numConstraints_;
@@ -224,6 +233,14 @@ public:
       // SetInequalityConstraint(d_lo, d_hi);
 
       SetSolutionBounds(xmin, xmax);
+
+      if (use_H1_semi)
+      {
+         double dx = space.GetMesh()->GetElementSize(0, 0);
+         MPI_Allreduce(MPI_IN_PLACE, &dx, 1, MPI_DOUBLE,
+                       MPI_MIN, pos_final_.ParFESpace()->GetComm());
+         H1SemiNormWeight = dx * dx;
+      }
    }
 
    virtual double CalcObjective(const Vector &x) const
