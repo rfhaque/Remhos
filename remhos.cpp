@@ -160,6 +160,7 @@ int main(int argc, char *argv[])
    MonolithicSolverType mono_type = MonolithicSolverType::None;
    bool project_analytic          = false;
    int optimization_type = 0;
+   bool h1_seminorm = false;
    int bounds_type = 0;
    bool pa = false;
    bool next_gen_full = false;
@@ -222,6 +223,9 @@ int main(int argc, char *argv[])
                   "Optimization type: 0 - no optimization,\n\t"
                   "                   1 - HiOp,\n\t"
                   "                   2 - LVPP.");
+   args.AddOption(&h1_seminorm, "-h1s", "--h1semi", "-no-h1s",
+                  "--no-h1semi",
+                  "Use the H1-seminorm term in optimization.");
    args.AddOption(&bounds_type, "-bt", "--bounds-type",
                   "Bounds stencil type: 0 - overlapping elements,\n\t"
                   "                     1 - matrix sparsity pattern.");
@@ -934,6 +938,7 @@ int main(int argc, char *argv[])
    {
       InterpolationRemap interpolator(pmesh);
       interpolator.visualization = visualization;
+      interpolator.h1_seminorm   = h1_seminorm;
       ParGridFunction u_gf(&pfes);
 
       if (project_analytic)
@@ -963,9 +968,11 @@ int main(int argc, char *argv[])
       {
          FunctionCoefficient fcoeff(u0_function);
          const double e_L1 = u_gf.ComputeL1Error(fcoeff);
+         const double e_L2 = u_gf.ComputeL2Error(fcoeff);
          if (myid == 0)
          {
             std::cout << "L1 error: " << e_L1 << std::endl;
+            std::cout << "L2 error: " << e_L2 << std::endl;
          }
       }
 
@@ -994,6 +1001,7 @@ int main(int argc, char *argv[])
       QuadratureFunction uu_qf(qspace);
       InterpolationRemap interpolator(pmesh);
       interpolator.visualization = visualization;
+      interpolator.h1_seminorm   = h1_seminorm;
       interpolator.Remap(u_qf, x_final, uu_qf, optimization_type);
 
       if (visualization)
@@ -1057,6 +1065,7 @@ int main(int argc, char *argv[])
       BlockVector ind_rho_e(offset);
       InterpolationRemap interpolator(pmesh);
       interpolator.visualization = visualization;
+      interpolator.h1_seminorm   = h1_seminorm;
       interpolator.SetQuadratureSpace(qspace);
       interpolator.SetEnergyFESpace(pfes);
       interpolator.RemapIndRhoE(ind_rho_e_0, x_final,

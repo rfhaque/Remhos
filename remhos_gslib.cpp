@@ -174,20 +174,23 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
 
       const int max_iter = 20;
       const double rtol = 1.e-7;
-      double atol = 1.e-7;
+      const double atol = 1.e-7;
       Vector y_out(u_interpolated.Size());
 
-      int numContraints = 1;
       double H1SeminormWeight = 0.0;
+      if (h1_seminorm)
+      {
+         double dx = pmesh_final.GetElementSize(0, 0);
+         MPI_Allreduce(MPI_IN_PLACE, &dx, 1, MPI_DOUBLE,
+                       MPI_MIN, pfes_final.GetComm());
+         H1SeminormWeight = dx * dx;
+      }
 
-      RhemosHiOpProblem ot_prob( pfes_final,
-                                 u_interpolated_initial,
-                                 u_interpolated,
-                                 u_final_min,
-                                 u_final_max, 
-                                 mass_0,
-                                 numContraints,
-                                 H1SeminormWeight);
+      const int numContraints = 1;
+      RhemosHiOpProblem ot_prob(pfes_final,
+                                u_interpolated_initial, u_interpolated,
+                                u_final_min, u_final_max,
+                                mass_0, numContraints, H1SeminormWeight);
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);

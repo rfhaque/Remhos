@@ -105,6 +105,7 @@ public:
                      Vector &ind_rho_e, int opt_type);
 
    bool visualization = true;
+   bool h1_seminorm   = false;
 };
 
 } // namespace mfem
