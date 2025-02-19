@@ -196,6 +196,7 @@ private:
    std::unique_ptr<ParGridFunction> primal_gf;
    std::unique_ptr<QuadratureFunction> primal_qf;
    std::unique_ptr<ParLinearForm> integrator;
+   int verbose = 0;
 public:
    ScalarLatentVolumeProjector(const Vector &targetVolume,
                                const Vector &pos,
@@ -205,6 +206,8 @@ public:
         pos(pos),
         primal_gf(new ParGridFunction(&fes, primal))
    { }
+   void SetVerbose(int lv=1) { verbose = lv; }
+
    ScalarLatentVolumeProjector(const Vector &targetVolume,
                                const Vector &pos,
                                QuadratureSpaceBase &qspace,
@@ -268,77 +271,111 @@ public:
       return mass;
    }
 
-   void Apply(Vector &x, const Vector &lower, const Vector &upper,
-              const real_t step_size, const Vector &search_l, const Vector &search_r,
-              Vector &lambda) override
+   real_t calculateShiftedMass(const real_t shift, const Vector &x,
+                               const Vector &lower, const Vector &upper)
    {
-      lambda.SetSize(1);
-      real_t secant_lower = search_l[0];
-      real_t secant_upper = search_r[0];
-
       const bool use_dev = primal.UseDevice() || x.UseDevice();
       const int N = primal.Size();
       auto primal_rw = primal.ReadWrite(use_dev);
       auto x_r = x.Read(use_dev);
       auto l_r = lower.Read(use_dev);
       auto u_r = upper.Read(use_dev);
+      mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { primal_rw[i] = sigmoid(x_r[i] + shift, l_r[i], u_r[i]); });
+      if (qspace)
+      {
+         return calculateMass(*primal_qf);
+      }
+      else
+      {
+         return calculateMass(*primal_gf);
+      }
+   }
+
+   void Apply(Vector &x, const Vector &lower, const Vector &upper,
+              const real_t step_size, const Vector &search_l, const Vector &search_r,
+              Vector &lambda) override
+   {
+      lambda.SetSize(1);
+      real_t lambda_lower = search_l[0];
+      real_t lambda_upper = search_r[0];
+
       real_t vol, vol_lower, vol_upper;
       real_t mid;
+      while (true)
       {
-         mid = secant_lower;
-         mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { primal_rw[i] = sigmoid(x_r[i] + step_size*mid, l_r[i], u_r[i]); });
-         vol_lower = 0.0;
-         if (qspace)
+         mid = lambda_lower;
+         vol_lower = calculateShiftedMass(mid, x, lower, upper);
+         if (vol_lower > targetVolume[0])
          {
-            vol_lower = calculateMass(*primal_qf);
+            lambda_lower = lambda_lower + (lambda_lower - lambda_upper);
          }
-         else
-         {
-            vol_lower = calculateMass(*primal_gf);
-         }
+         else { break;}
       }
+      while (true)
       {
-         mid = secant_upper;
-         mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { primal_rw[i] = sigmoid(x_r[i] + step_size*mid, l_r[i], u_r[i]); });
-         vol_upper = 0.0;
-         if (qspace)
+         mid = lambda_upper;
+         vol_upper = calculateShiftedMass(mid, x, lower, upper);
+         if (vol_upper < targetVolume[0])
          {
-            vol_upper = calculateMass(*primal_qf);
+            lambda_upper = lambda_upper + (lambda_upper - lambda_lower);
          }
-         else
-         {
-            vol_upper = calculateMass(*primal_gf);
-         }
+         else { break; }
       }
       vol_lower = vol_lower - targetVolume[0];
       vol_upper = vol_upper - targetVolume[0];
-      while (secant_upper - secant_lower > 1e-08)
+      int iter = 0;
+      bool was_negative = false;
+
+      // Regula Falsi method with Illinois update
+      while (lambda_upper - lambda_lower > 1e-08)
       {
-         mid = (vol_upper*secant_lower - vol_lower*secant_upper)/(vol_upper - vol_lower);
-         mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { primal_rw[i] = sigmoid(x_r[i] + step_size*mid, l_r[i], u_r[i]); });
-         vol = 0.0;
-         if (qspace)
+         iter++;
+         // convex combination of upper and lower bracket
+         mid = (vol_upper*lambda_lower - vol_lower*lambda_upper)/(vol_upper - vol_lower);
+
+         if (verbose > 1 && Mpi::Root())
          {
-            vol = calculateMass(*primal_qf);
+            out << " mid : " << mid
+                << " ( interval: " << lambda_upper - lambda_lower << " )"
+                << ": vol-diff = " << std::flush;
          }
-         else
+         vol = calculateShiftedMass(mid, x, lower, upper);
+         if (verbose > 1 && Mpi::Root())
          {
-            vol = calculateMass(*primal_gf);
+            out << vol - targetVolume[0] << std::endl;
          }
          if (vol < targetVolume[0])
          {
-            secant_lower = mid;
             vol_lower = vol - targetVolume[0];
+            lambda_lower = mid;
+            // Illinois update
+            if (iter > 1 && was_negative)
+            {
+               vol_upper = 0.5*vol_upper;
+            }
+            was_negative = true;
          }
          else
          {
-            secant_upper = mid;
+            lambda_upper = mid;
             vol_upper = vol - targetVolume[0];
+            if (iter > 1 && !was_negative)
+            {
+               vol_lower = 0.5*vol_lower;
+            }
+            was_negative = false;
          }
       }
+      if (verbose && Mpi::Root())
+      {
+         out << "Volume projection converged in " << iter << " iterations\n"
+             << "  with volume diff: " << vol - targetVolume[0]
+             << " (" << std::fixed << std::setprecision(4)
+             << (vol - targetVolume[0])/targetVolume[0]*100 << "%)" << std::endl;
+      }
+
       lambda = mid;
       x += step_size*mid;
-      /* if (Mpi::Root()) { out << " vol-diff: " << vol << " - " << targetVolume[0] << " = " << vol - targetVolume[0] << std::flush; } */
    }
 };
 

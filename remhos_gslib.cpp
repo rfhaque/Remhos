@@ -15,6 +15,8 @@
 // testbed platforms, in support of the nation's exascale computing imperative.
 
 #include "remhos_gslib.hpp"
+#include "config/config.hpp"
+#include "linalg/vector.hpp"
 #include "remhos_tools.hpp"
 #include "remhos_HiOp.hpp"
 #include "remhos_lvpp.hpp"
@@ -58,7 +60,7 @@ void VisQuadratureFunction(ParMesh &pmesh, QuadratureFunction &q,
 {
    osockstream sol_sock(19916, "localhost");
    sol_sock << "parallel " << pmesh.GetNRanks() << " "
-                           << pmesh.GetMyRank() << "\n";
+            << pmesh.GetMyRank() << "\n";
    sol_sock << "quadrature\n" << pmesh << q << std::flush;
    sol_sock << "window_title '" << info << "'\n";
    sol_sock << "window_geometry " << x << " " << y << " 400 400\n";
@@ -209,7 +211,8 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       L2Obj obj(*u_final.ParFESpace(), u_interpolated_cf);
       BoxMirrorDescent md(obj, u_final, u_final_min, u_final_max);
       Vector target_volume(1); target_volume[0] = mass_0;
-      ScalarLatentVolumeProjector projector(target_volume, pos_final, *u_final.ParFESpace(), u_final);
+      ScalarLatentVolumeProjector projector(target_volume, pos_final,
+                                            *u_final.ParFESpace(), u_final);
       md.AddProjector(projector);
       ParGridFunction psi(u_final);
       psi = 0.0;
@@ -219,23 +222,23 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    }
    else if (opt_type == 4)
    {
-      GridFunctionCoefficient u_interpolated_cf(&u_interpolated);
-      L2Obj obj(*u_final.ParFESpace(), u_interpolated_cf);
-      BoxMirrorDescent md(obj, u_final, u_final_min, u_final_max);
       Vector target_volume(1); target_volume[0] = mass_0;
-      ScalarLatentVolumeProjector projector(target_volume, pos_final, *u_final.ParFESpace(), u_final);
-      md.AddProjector(projector);
-      ParGridFunction psi(u_final);
+      ScalarLatentVolumeProjector projector(target_volume, pos_final,
+                                            *u_final.ParFESpace(), u_final);
+      ParGridFunction psi(u_interpolated);
+      Vector search_l({infinity()}), search_r({-infinity()}), lambda(1);
       for (int i=0; i<u_interpolated.Size(); i++)
       {
-         psi[i] = inv_sigmoid(u_interpolated[i], u_final_min[i], u_final_max[i]);
+         psi[i] = inv_sigmoid(psi[i], u_final_min[i], u_final_max[i]);
+         search_l[0] = std::min(search_l[0], psi[i]);
+         search_r[0] = std::max(search_r[0], psi[i]);
       }
-      Vector search_l({-1e09}), search_r({1e09}), lambda(1);
+      MPI_Allreduce(MPI_IN_PLACE, &search_l[0], 1, MFEM_MPI_REAL_T, MPI_MIN,
+                    pmesh_init.GetComm());
+      MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 1, MFEM_MPI_REAL_T, MPI_MAX,
+                    pmesh_init.GetComm());
+      projector.SetVerbose(2);
       projector.Apply(psi, u_final_min, u_final_max, 1.0, search_l, search_r, lambda);
-
-      /* md.SetVerbose(1); */
-      /* md.Optimize(psi); */
-      /* md.UpdatePrimal(psi); */
    }
 
    // Report masses.
@@ -271,7 +274,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    const int order = u_0.GetIntRule(0).GetOrder() / 2;
    const int ref_factor = order + 1;
    ParMesh pmesh_lor = ParMesh::MakeRefined(pmesh_init, ref_factor,
-                                            BasisType::ClosedGL);
+                       BasisType::ClosedGL);
    L2_FECollection fec_lor(0, dim);
    ParFiniteElementSpace pfes_lor(&pmesh_lor, &fec_lor);
    ParGridFunction u_0_lor(&pfes_lor);
@@ -294,7 +297,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    // Report mass error.
    double mass_0 = Integrate(*pmesh_init.GetNodes(), &u_0,
                              nullptr, nullptr),
-          mass_f = Integrate(pos_final, &u, nullptr, nullptr);
+                   mass_f = Integrate(pos_final, &u, nullptr, nullptr);
    if (pmesh_init.GetMyRank() == 0)
    {
       std::cout << "Mass initial (old mesh):  " << mass_0 << std::endl
@@ -374,7 +377,8 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       L2Obj obj(*u.GetSpace(), u_target_cf);
       BoxMirrorDescent md(obj, u, u_min, u_max);
       Vector target_volume(1); target_volume[0] = mass_0;
-      ScalarLatentVolumeProjector projector(target_volume, pos_final, *u.GetSpace(), u);
+      ScalarLatentVolumeProjector projector(
+         target_volume, pos_final, *u.GetSpace(), u);
       md.AddProjector(projector);
       QuadratureFunction psi(u);
       psi = 0.0;
@@ -383,18 +387,22 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    }
    else if (opt_type == 4)
    {
-      QuadratureFunction u_target(u);
-      QuadratureFunctionCoefficient u_target_cf(u_target);
-      L2Obj obj(*u.GetSpace(), u_target_cf);
-      BoxMirrorDescent md(obj, u, u_min, u_max);
       Vector target_volume(1); target_volume[0] = mass_0;
-      ScalarLatentVolumeProjector projector(target_volume, pos_final, *u.GetSpace(), u);
+      ScalarLatentVolumeProjector projector(target_volume, pos_final, *u.GetSpace(),
+                                            u);
       QuadratureFunction psi(u);
-      for (int i=0; i<u.Size(); i++)
+      Vector search_l({infinity()}), search_r({-infinity()}), lambda(1);
+      for (int i=0; i<psi.Size(); i++)
       {
-         psi[i] = inv_sigmoid(u[i], u_min[i], u_max[i]);
+         psi[i] = inv_sigmoid(psi[i], u_min[i], u_max[i]);
+         search_l[0] = std::min(search_l[0], psi[i]);
+         search_r[0] = std::max(search_r[0], psi[i]);
       }
-      Vector search_l({-1e09}), search_r({1e09}), lambda(1);
+      MPI_Allreduce(MPI_IN_PLACE, &search_l[0], 1, MFEM_MPI_REAL_T, MPI_MIN,
+                    pmesh_init.GetComm());
+      MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 1, MFEM_MPI_REAL_T, MPI_MAX,
+                    pmesh_init.GetComm());
+      projector.SetVerbose(2);
       projector.Apply(psi, u_min, u_max, 1.0, search_l, search_r, lambda);
    }
 
@@ -545,8 +553,8 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
 }
 
 void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
-    const ParGridFunction &pos_final,
-    Vector &ind_rho_e, int opt_type)
+                                      const ParGridFunction &pos_final,
+                                      Vector &ind_rho_e, int opt_type)
 {
    const int dim = pmesh_init.Dimension();
    MFEM_VERIFY(dim > 1, "Interpolation remap works only in 2D and 3D.");
@@ -556,7 +564,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    const int size_qf = qspace->GetSize();
    Vector *ire_ptr = const_cast<Vector *>(&ind_rho_e_0);
    QuadratureFunction ind_0(qspace, ire_ptr->GetData()),
-       rho_0(qspace, ire_ptr->GetData() + size_qf);
+                      rho_0(qspace, ire_ptr->GetData() + size_qf);
    ParGridFunction e_0(pfes_e, ire_ptr->GetData() + 2*size_qf);
 
    // Generate list of points where ire_initial will be interpolated.
@@ -569,7 +577,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    const int order = qspace->GetIntRule(0).GetOrder() / 2;
    const int ref_factor = order + 1;
    ParMesh pmesh_lor = ParMesh::MakeRefined(pmesh_init, ref_factor,
-                                            BasisType::ClosedGL);
+                       BasisType::ClosedGL);
    L2_FECollection fec_lor(0, dim);
    ParFiniteElementSpace pfes_lor(&pmesh_lor, &fec_lor);
    ParGridFunction ind_0_lor(&pfes_lor), rho_0_lor(&pfes_lor);
@@ -582,13 +590,15 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    if (visualization)
    {
       socketstream sock_ind, sock_rho;
-      VisualizeField(sock_ind, "localhost", 19916, ind_0_lor, "ind_0 LOR", 0, 500, 400, 400);
-      VisualizeField(sock_rho, "localhost", 19916, rho_0_lor, "rho_0 LOR", 400, 500, 400, 400);
+      VisualizeField(sock_ind, "localhost", 19916, ind_0_lor, "ind_0 LOR", 0, 500,
+                     400, 400);
+      VisualizeField(sock_rho, "localhost", 19916, rho_0_lor, "rho_0 LOR", 400, 500,
+                     400, 400);
    }
 
    // Interpolate into ind_rho_e.
    QuadratureFunction ind(qspace, ind_rho_e.GetData()),
-       rho(qspace, ind_rho_e.GetData() + size_qf);
+                      rho(qspace, ind_rho_e.GetData() + size_qf);
    ParGridFunction e(pfes_e, ind_rho_e.GetData() + 2*size_qf);
    FindPointsGSLIB finder(pmesh_init.GetComm());
    finder.Setup(pmesh_lor);
@@ -601,14 +611,14 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    // Report conservation errors of ire_final.
    const double volume_0 = Integrate(*pmesh_init.GetNodes(), &ind_0,
                                      nullptr, nullptr),
-       volume_f = Integrate(pos_final, &ind,
-                            nullptr, nullptr),
-       mass_0   = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0,
-                          nullptr),
-       mass_f   = Integrate(pos_final, &ind, &rho,
-                          nullptr),
-       energy_0 = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0, &e_0),
-       energy_f = Integrate(pos_final, &ind, &rho, &e);
+                           volume_f = Integrate(pos_final, &ind,
+                                      nullptr, nullptr),
+                                      mass_0   = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0,
+                                         nullptr),
+                                         mass_f   = Integrate(pos_final, &ind, &rho,
+                                            nullptr),
+                                            energy_0 = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0, &e_0),
+                                            energy_f = Integrate(pos_final, &ind, &rho, &e);
    if (pmesh_init.GetMyRank() == 0)
    {
       std::cout << "Volume initial:             " << volume_0 << std::endl
@@ -647,8 +657,8 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
 }
 
 void InterpolationRemap::GetDOFPositions(const ParFiniteElementSpace &pfes,
-                                         const Vector &pos_mesh,
-                                         Vector &pos_dofs)
+      const Vector &pos_mesh,
+      Vector &pos_dofs)
 {
    const int NE  = pfes.GetNE(), dim = pmesh_init.Dimension();
    const int nsp = pfes.GetFE(0)->GetNodes().GetNPoints();
@@ -679,8 +689,8 @@ void InterpolationRemap::GetDOFPositions(const ParFiniteElementSpace &pfes,
 }
 
 void InterpolationRemap::GetQuadPositions(const QuadratureSpace &qspace,
-                                          const Vector &pos_mesh,
-                                          Vector &pos_quads)
+      const Vector &pos_mesh,
+      Vector &pos_quads)
 {
    const int NE  = qspace.GetMesh()->GetNE(), dim = pmesh_init.Dimension();
    const int nsp = qspace.GetElementIntRule(0).GetNPoints();
@@ -754,8 +764,8 @@ double InterpolationRemap::Integrate(const Vector &pos,
    for (int e = 0; e < NE; e++)
    {
       const IntegrationRule &ir =
-          (qspace) ? qspace->GetElementIntRule(e)
-                   : IntRules.Get(g1->ParFESpace()->GetFE(e)->GetGeomType(), 7);
+         (qspace) ? qspace->GetElementIntRule(e)
+         : IntRules.Get(g1->ParFESpace()->GetFE(e)->GetGeomType(), 7);
       const int nqp = ir.GetNPoints();
 
       // Transformation w.r.t. the given mesh positions.
@@ -763,9 +773,12 @@ double InterpolationRemap::Integrate(const Vector &pos,
       mesh->GetElementTransformation(e, pos, &Tr);
 
       Vector q1_vals(nqp), q2_vals(nqp), g1_vals(nqp);
-      if (q1) { q1->GetValues(e, q1_vals); } else { q1_vals = 1.0; }
-      if (q2) { q2->GetValues(e, q2_vals); } else { q2_vals = 1.0; }
-      if (g1) { g1->GetValues(Tr, ir, g1_vals); } else { g1_vals = 1.0; }
+      if (q1) { q1->GetValues(e, q1_vals); }
+      else { q1_vals = 1.0; }
+      if (q2) { q2->GetValues(e, q2_vals); }
+      else { q2_vals = 1.0; }
+      if (g1) { g1->GetValues(Tr, ir, g1_vals); }
+      else { g1_vals = 1.0; }
 
       for (int q = 0; q < nqp; q++)
       {
