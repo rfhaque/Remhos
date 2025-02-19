@@ -308,7 +308,7 @@ public:
       }
       lambda = mid;
       x += step_size*mid;
-      if (Mpi::Root()) { out << " vol-diff: " << vol << " - " << targetVolume[0] << " = " << vol - targetVolume[0] << std::flush; }
+      /* if (Mpi::Root()) { out << " vol-diff: " << vol << " - " << targetVolume[0] << " = " << vol - targetVolume[0] << std::flush; } */
    }
 };
 
