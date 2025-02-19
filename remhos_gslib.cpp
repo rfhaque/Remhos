@@ -79,7 +79,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    ParFiniteElementSpace &pfes_final = *u_final.ParFESpace();
 
    {
-      ParaViewDataCollection pvdc("initla_mesh", &pmesh_init);
+      ParaViewDataCollection pvdc("initial_mesh", &pmesh_init);
       pvdc.SetDataFormat(VTKFormat::BINARY32);
       pvdc.SetCycle(0);
       pvdc.SetTime(1.0);
