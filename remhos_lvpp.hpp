@@ -1,6 +1,7 @@
 
 #ifndef REMHOS_LVPP_HPP
 #define REMHOS_LVPP_HPP
+#include "config/config.hpp"
 #include "fem/fe_coll.hpp"
 #include "fem/qspace.hpp"
 #include "general/forall.hpp"
@@ -18,6 +19,17 @@ inline real_t sigmoid(const real_t x)
 inline real_t sigmoid(const real_t x, const real_t l, const real_t u)
 {
    return l + (u - l) * sigmoid(x);
+}
+
+inline real_t inv_sigmoid(const real_t x)
+{
+   real_t y = std::max(std::min(x, 1.0 - 1e-09), 1e-09);
+   return std::log(y / (1.0 - y));
+}
+
+inline real_t inv_sigmoid(const real_t x, const real_t l, const real_t u)
+{
+   return (u - l) > 1e-09 ? inv_sigmoid((x - l) / (u - l)) : 0.0;
 }
 
 class MappedGridFunctionCoefficient : public GridFunctionCoefficient
@@ -168,7 +180,8 @@ public:
    { }
    MPI_Comm GetComm() { return comm; }
    virtual void Apply(Vector &x, const Vector &lower, const Vector &upper,
-                      const real_t step_size, const Vector &search_l, const Vector &search_r) = 0;
+                      const real_t step_size, const Vector &search_l, const Vector &search_r,
+                      Vector &lambda) = 0;
 };
 
 
@@ -256,8 +269,10 @@ public:
    }
 
    void Apply(Vector &x, const Vector &lower, const Vector &upper,
-              const real_t step_size, const Vector &search_l, const Vector &search_r)
+              const real_t step_size, const Vector &search_l, const Vector &search_r,
+              Vector &lambda) override
    {
+      lambda.SetSize(1);
       real_t bisec_lower = search_l[0];
       real_t bisec_upper = search_r[0];
 
@@ -291,6 +306,7 @@ public:
             bisec_upper = mid;
          }
       }
+      lambda = mid;
       x += step_size*mid;
       if (Mpi::Root()) { out << " vol-diff: " << vol << " - " << targetVolume[0] << " = " << vol - targetVolume[0] << std::flush; }
    }
@@ -356,13 +372,17 @@ public:
    {
       xnew.SetSize(x.Size());
       real_t step_size = 1.0;
+      Vector lambda(1);
+      lambda = 0.0;
       if (projector)
       {
          Vector search_l(1), search_r(1);
          search_l[0] = -1e6;
          search_r[0] = 1e6;
-         projector->Apply(x, lower, upper, 1.0, search_l, search_r);
+         projector->Apply(x, lower, upper, 1.0, search_l, search_r, lambda);
       }
+      int N = x.Size();
+      MPI_Allreduce(MPI_IN_PLACE, &N, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
       for (int i=0; i<max_iter; i++)
       {
          /* step_size = i+1.0; */
@@ -371,17 +391,40 @@ public:
          if (projector)
          {
             Vector search_l(1), search_r(1);
+            // roughly estimate the search range
+            // TODO: Update search interval
             search_l[0] = -grad.Normlinf();
             search_r[0] = +grad.Normlinf();
             MPI_Allreduce(MPI_IN_PLACE, search_l.GetData(), 1, MFEM_MPI_REAL_T, MPI_MIN,
                           projector->GetComm());
             MPI_Allreduce(MPI_IN_PLACE, search_r.GetData(), 1, MFEM_MPI_REAL_T, MPI_MAX,
                           projector->GetComm());
-            projector->Apply(x, lower, upper, step_size, search_l, search_r);
+            projector->Apply(x, lower, upper, step_size, search_l, search_r, lambda);
          }
          UpdatePrimal(x);
          real_t val = obj.Eval(primal);
-         if (verbose) { if (Mpi::Root()) { std::cout << " val: " << val << std::endl; } }
+         if (verbose) { if (Mpi::Root()) { std::cout << " val: " << val; } }
+         // TDOO: Check convergence using KKT
+         real_t kkt_residual = 0.0;
+         for (int i=0; i<grad.Size(); i++)
+         {
+            const real_t direction = -grad[i] + lambda[0];
+            const real_t eta = std::max((lower[i] - primal[i])*direction,
+                                        (upper[i] - primal[i])*direction);
+            kkt_residual += std::fabs(eta);
+         }
+         kkt_residual /= N;
+         MPI_Allreduce(MPI_IN_PLACE, &kkt_residual, 1, MFEM_MPI_REAL_T, MPI_SUM,
+                       projector->GetComm());
+         if (kkt_residual < tol)
+         {
+            if (verbose) { if (Mpi::Root()) std::cout << "Converged: " << kkt_residual << std::endl; }
+            break;
+         }
+         else
+         {
+            if (verbose) { if (Mpi::Root()) std::cout << " KKT: " << kkt_residual << std::endl; }
+         }
       }
    }
 };

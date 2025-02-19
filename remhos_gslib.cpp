@@ -217,6 +217,26 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       md.Optimize(psi);
       md.UpdatePrimal(psi);
    }
+   else if (opt_type == 4)
+   {
+      GridFunctionCoefficient u_interpolated_cf(&u_interpolated);
+      L2Obj obj(*u_final.ParFESpace(), u_interpolated_cf);
+      BoxMirrorDescent md(obj, u_final, u_final_min, u_final_max);
+      Vector target_volume(1); target_volume[0] = mass_0;
+      ScalarLatentVolumeProjector projector(target_volume, pos_final, *u_final.ParFESpace(), u_final);
+      md.AddProjector(projector);
+      ParGridFunction psi(u_final);
+      for (int i=0; i<u_interpolated.Size(); i++)
+      {
+         psi[i] = inv_sigmoid(u_interpolated[i], u_final_min[i], u_final_max[i]);
+      }
+      Vector search_l({-1e09}), search_r({1e09}), lambda(1);
+      projector.Apply(psi, u_final_min, u_final_max, 1.0, search_l, search_r, lambda);
+
+      /* md.SetVerbose(1); */
+      /* md.Optimize(psi); */
+      /* md.UpdatePrimal(psi); */
+   }
 
    // Report masses.
    mass_f = Mass(pos_final, u_final);
@@ -360,6 +380,22 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       psi = 0.0;
       md.SetVerbose(1);
       md.Optimize(psi);
+   }
+   else if (opt_type == 4)
+   {
+      QuadratureFunction u_target(u);
+      QuadratureFunctionCoefficient u_target_cf(u_target);
+      L2Obj obj(*u.GetSpace(), u_target_cf);
+      BoxMirrorDescent md(obj, u, u_min, u_max);
+      Vector target_volume(1); target_volume[0] = mass_0;
+      ScalarLatentVolumeProjector projector(target_volume, pos_final, *u.GetSpace(), u);
+      QuadratureFunction psi(u);
+      for (int i=0; i<u.Size(); i++)
+      {
+         psi[i] = inv_sigmoid(u[i], u_min[i], u_max[i]);
+      }
+      Vector search_l({-1e09}), search_r({1e09}), lambda(1);
+      projector.Apply(psi, u_min, u_max, 1.0, search_l, search_r, lambda);
    }
 
    // Report final masses.
