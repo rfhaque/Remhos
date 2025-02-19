@@ -273,8 +273,8 @@ public:
               Vector &lambda) override
    {
       lambda.SetSize(1);
-      real_t bisec_lower = search_l[0];
-      real_t bisec_upper = search_r[0];
+      real_t secant_lower = search_l[0];
+      real_t secant_upper = search_r[0];
 
       const bool use_dev = primal.UseDevice() || x.UseDevice();
       const int N = primal.Size();
@@ -282,11 +282,39 @@ public:
       auto x_r = x.Read(use_dev);
       auto l_r = lower.Read(use_dev);
       auto u_r = upper.Read(use_dev);
-      real_t vol;
+      real_t vol, vol_lower, vol_upper;
       real_t mid;
-      while (bisec_upper - bisec_lower > 1e-08)
       {
-         mid = 0.5*(bisec_lower + bisec_upper);
+         mid = secant_lower;
+         mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { primal_rw[i] = sigmoid(x_r[i] + step_size*mid, l_r[i], u_r[i]); });
+         vol_lower = 0.0;
+         if (qspace)
+         {
+            vol_lower = calculateMass(*primal_qf);
+         }
+         else
+         {
+            vol_lower = calculateMass(*primal_gf);
+         }
+      }
+      {
+         mid = secant_upper;
+         mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { primal_rw[i] = sigmoid(x_r[i] + step_size*mid, l_r[i], u_r[i]); });
+         vol_upper = 0.0;
+         if (qspace)
+         {
+            vol_upper = calculateMass(*primal_qf);
+         }
+         else
+         {
+            vol_upper = calculateMass(*primal_gf);
+         }
+      }
+      vol_lower = vol_lower - targetVolume[0];
+      vol_upper = vol_upper - targetVolume[0];
+      while (secant_upper - secant_lower > 1e-08)
+      {
+         mid = (vol_upper*secant_lower - vol_lower*secant_upper)/(vol_upper - vol_lower);
          mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { primal_rw[i] = sigmoid(x_r[i] + step_size*mid, l_r[i], u_r[i]); });
          vol = 0.0;
          if (qspace)
@@ -299,11 +327,13 @@ public:
          }
          if (vol < targetVolume[0])
          {
-            bisec_lower = mid;
+            secant_lower = mid;
+            vol_lower = vol - targetVolume[0];
          }
          else
          {
-            bisec_upper = mid;
+            secant_upper = mid;
+            vol_upper = vol - targetVolume[0];
          }
       }
       lambda = mid;
