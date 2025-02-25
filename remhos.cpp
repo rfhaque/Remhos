@@ -38,6 +38,10 @@
 #include "remhos_mono.hpp"
 #include "remhos_tools.hpp"
 #include "remhos_sync.hpp"
+#include "fem/qinterp/eval.hpp"
+#include "fem/qinterp/det.cpp"
+#include "fem/qinterp/grad.hpp"
+#include "fem/integ/bilininteg_mass_kernels.hpp"
 
 #ifdef USE_CALIPER
 #include <caliper/cali.h>
@@ -314,6 +318,19 @@ MFEM_EXPORT int remhos(int argc, char *argv[], double &final_mass_u)
    // CUDA, OCCA, RAJA and OpenMP based on command line options.
    Device device(device_config);
    if (myid == 0) { device.Print(); }
+
+   if (myid == 0) { KernelReporter::Enable(); }
+   using TENS = QuadratureInterpolator::TensorEvalKernels;
+   using DET  = QuadratureInterpolator::DetKernels;
+   using GRAD = QuadratureInterpolator::GradKernels;
+   // 3D Q2.
+   TENS::Specialization<3,QVectorLayout::byNODES,1,3,5>::Opt<1>::Add();
+   TENS::Specialization<3,QVectorLayout::byVDIM,3,3,5>::Opt<1>::Add();
+   GRAD::Specialization<3,QVectorLayout::byNODES,0,3,2,2>::Add();
+   GRAD::Specialization<3,QVectorLayout::byVDIM,0,3,2,2>::Add();
+   MassIntegrator::AddSpecialization<3,3,5>();
+   // 3D Q3.
+   TENS::Specialization<3,QVectorLayout::byNODES,1,4,6>::Opt<1>::Add();
 
    // When not using lua, exec mode is derived from problem number convention
    if (problem_num < 10)      { exec_mode = 0; }
