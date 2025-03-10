@@ -41,7 +41,7 @@ void RemhosIndRhoEHiOpProblem::EnergyGradIntegrator::AssembleRHSElementVect(
   elvect.SetSize(dof*dim);
   elvect = 0.0;
 
-  const IntegrationRule *ir = IntRule;
+  const IntegrationRule *ir = &(ind_->GetSpace()->GetIntRule(eleIndex));
   const int nqp = ir->GetNPoints();
 
   Vector ind_vals(nqp), rho_vals(nqp);

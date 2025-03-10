@@ -755,7 +755,6 @@ virtual void CalcConstraintGrad(const int constNumber, const Vector &x, Vector &
 
       if( constNumber == 2)
       {
-         std::cout<<"constr 3"<<std::endl;
          ParLinearForm energyGradLF(&fespace_);
          mfem::LinearFormIntegrator *lfi_1 =
              new mfem::RemhosIndRhoEHiOpProblem::EnergyGradIntegrator(ind, rho);
@@ -788,13 +787,13 @@ virtual void CalcConstraint(const int constNumber, const Vector &x, Vector &cons
       {
          double mass_s = Integrate(pos_final, &ind, &rho, nullptr);
 
-         constVal[0] = mass_s - targetMass;
+         constVal[1] = mass_s - targetMass;
       }
       else if( constNumber == 2)
       {
          double energy_s = Integrate(pos_final, &ind, &rho, &energy);
 
-         constVal[0] = energy_s - targetEnergy;
+         constVal[2] = energy_s - targetEnergy;
       }
       else{mfem_error("Constraint index does not exist.");}
    };

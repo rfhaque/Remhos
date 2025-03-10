@@ -688,8 +688,8 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
       }
 
       const int max_iter = 200;
-      const double rtol = 1.e-3;
-      const double atol = 1.e-3;
+      const double rtol = 5.e-2;
+      const double atol = 5.e-2;
       Vector y_out(ind_rho_e.Size());
 
       const int numContraints = 3;
