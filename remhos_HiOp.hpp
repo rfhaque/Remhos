@@ -211,6 +211,7 @@ private:
 
    double targetMass;
    double H1SemiNormWeight = 0.0;
+   bool isL2_ = true;
 
 public:
    RemhosQuadHiOpProblem(QuadratureSpace &space,
@@ -221,11 +222,12 @@ public:
                      const Vector &xmax, 
                      double initalmass,
                      int numConstraints_,
-                     bool use_H1_semi)
+                     bool use_H1_semi,
+                     bool isL2 = true)
       : OptimizationProblem(design_Var.Size(), NULL, NULL),
         x_initial(u_initial), pos_final(pos_final_), qspace(space), designVar(design_Var),
         d_lo(numConstraints_), d_hi(numConstraints_), massvec(numConstraints_),
-        targetMass(initalmass)
+        targetMass(initalmass), isL2_(isL2)
    {
 
       numConstraints = numConstraints_;
@@ -243,17 +245,53 @@ public:
       }
    }
 
-   virtual double CalcObjective(const Vector &x) const
+virtual double CalcObjective(const Vector &x) const
    {
       QuadratureFunction x_diff(&qspace); x_diff = 0.0;
       subtract( x, x_initial, x_diff);
+
+      if(isL2_)
+      {
+         auto mesh = qspace.GetMesh();
+         const int NE = mesh->GetNE();
+
+         Array<int> offset(NE+1);
+         offset[0] = 0;
+
+         for (int e = 0; e < NE; e++)
+         {            
+            const IntegrationRule &ir = qspace.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
+
+            offset[e+1] = offset[e] + nqp;
+         }
+
+         for (int e = 0; e < NE; e++)
+         {
+            const int s_offset = offset[e];
+
+            IsoparametricTransformation Tr;
+            mesh->GetElementTransformation(e, pos_final, &Tr);
+
+            const IntegrationRule &ir = qspace.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
+
+            for (int q = 0; q < nqp; q++)
+            {
+               const IntegrationPoint &ip = ir.IntPoint(q);
+               Tr.SetIntPoint(&ip);
+
+               x_diff[s_offset+q] = Tr.Weight() * ip.weight * x_diff[s_offset+q];
+            }
+         }
+      }
 
       real_t norm = x_diff.Norml2();
 
       real_t normSq = norm * norm;
 
       MPI_Allreduce(MPI_IN_PLACE, &normSq, 1, MPI_DOUBLE, MPI_SUM,
-                 MPI_COMM_WORLD);
+                  MPI_COMM_WORLD);
 
       return 0.5 * normSq;
    }
@@ -262,6 +300,42 @@ public:
    {
       QuadratureFunction x_diff(&qspace); x_diff = 0.0;
       subtract( x, x_initial, x_diff);
+
+      if(isL2_)
+      {
+         auto mesh = qspace.GetMesh();
+         const int NE = mesh->GetNE();
+
+         Array<int> offset(NE+1);
+         offset[0] = 0;
+
+         for (int e = 0; e < NE; e++)
+         {            
+            const IntegrationRule &ir = qspace.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
+
+            offset[e+1] = offset[e] + nqp;
+         }
+
+         for (int e = 0; e < NE; e++)
+         {
+            const int s_offset = offset[e];
+
+            IsoparametricTransformation Tr;
+            mesh->GetElementTransformation(e, pos_final, &Tr);
+
+            const IntegrationRule &ir = qspace.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
+
+            for (int q = 0; q < nqp; q++)
+            {
+               const IntegrationPoint &ip = ir.IntPoint(q);
+               Tr.SetIntPoint(&ip);
+
+               x_diff[s_offset+q] = Tr.Weight() * ip.weight * x_diff[s_offset+q];
+            }
+         }
+      }
 
       grad = x_diff;
    }
@@ -320,6 +394,410 @@ public:
          constVal[0] = mass_s - targetMass;
       }
    }
+
+private:
+
+double Integrate(const Vector &pos,
+                 const QuadratureFunction *q1,
+                 const QuadratureFunction *q2,
+                 const ParGridFunction *g1) const
+{
+   MFEM_VERIFY(q1 || q2 || g1, "At least one function must be specified.");
+
+   const QuadratureSpace *qspace = nullptr;
+   if (q1) { qspace = dynamic_cast<const QuadratureSpace *>(q1->GetSpace()); }
+   if (q2) { qspace = dynamic_cast<const QuadratureSpace *>(q2->GetSpace()); }
+
+   auto mesh = (qspace) ? qspace->GetMesh() : g1->ParFESpace()->GetMesh();
+   const int NE = mesh->GetNE();
+   double integral = 0.0;
+   for (int e = 0; e < NE; e++)
+   {
+      const IntegrationRule &ir =
+          (qspace) ? qspace->GetElementIntRule(e)
+                   : IntRules.Get(g1->ParFESpace()->GetFE(e)->GetGeomType(), 7);
+      const int nqp = ir.GetNPoints();
+
+      // Transformation w.r.t. the given mesh positions.
+      IsoparametricTransformation Tr;
+      mesh->GetElementTransformation(e, pos, &Tr);
+
+      Vector q1_vals(nqp), q2_vals(nqp), g1_vals(nqp);
+      if (q1) { q1->GetValues(e, q1_vals); } else { q1_vals = 1.0; }
+      if (q2) { q2->GetValues(e, q2_vals); } else { q2_vals = 1.0; }
+      if (g1) { g1->GetValues(Tr, ir, g1_vals); } else { g1_vals = 1.0; }
+
+      for (int q = 0; q < nqp; q++)
+      {
+         const IntegrationPoint &ip = ir.IntPoint(q);
+         Tr.SetIntPoint(&ip);
+         integral += Tr.Weight() * ip.weight *
+                     q1_vals(q) * q2_vals(q) * g1_vals(q);
+      }
+   }
+   MPI_Allreduce(MPI_IN_PLACE, &integral, 1, MPI_DOUBLE, MPI_SUM,
+                 MPI_COMM_WORLD);
+   return integral;
+}
+   
+};
+
+class RemhosIndRhoEHiOpProblem : public OptimizationProblem
+{
+private:
+   const Vector x_initial;
+   const ParGridFunction pos_final;
+   QuadratureSpace & qspace_;
+   ParFiniteElementSpace & fespace_;
+   const Vector & designVar;
+   Vector d_lo, d_hi, massvec;
+
+   double targetVol;
+   double targetMass;
+   double targetEnergy;
+   double H1SemiNormWeight = 0.0;
+   bool isL2_ = true;
+
+   const int size_qf;
+   const int size_gf;
+
+   Array<int> offset;
+
+class EnergyGradIntegrator : public mfem::LinearFormIntegrator {
+public:
+  EnergyGradIntegrator(const mfem::QuadratureFunction &ind, const mfem::QuadratureFunction &rho);
+  ~EnergyGradIntegrator(){};
+  void AssembleRHSElementVect(const mfem::FiniteElement &el, mfem::ElementTransformation &T, mfem::Vector &elvect);
+private:
+
+  const mfem::QuadratureFunction *ind_;
+  const mfem::QuadratureFunction *rho_;
+};
+
+
+
+public:
+   RemhosIndRhoEHiOpProblem(QuadratureSpace       & qspace,
+                            ParFiniteElementSpace & fespace,
+                            const ParGridFunction & pos_final_,
+                            const Vector          & u_initial,
+                            const Vector          & design_Var,
+                            const Vector          & xmin, 
+                            const Vector          & xmax, 
+                            const double          & initalvol,
+                            const double          & initalmass,
+                            const double          & initalenergy,
+                            const int             & numConstraints_,
+                            const bool            & use_H1_semi,
+                            const bool            & isL2 = true)
+      : OptimizationProblem(design_Var.Size(), NULL, NULL),
+        x_initial(u_initial), pos_final(pos_final_), qspace_(qspace), fespace_(fespace), designVar(design_Var),
+        d_lo(numConstraints_), d_hi(numConstraints_), massvec(numConstraints_),
+        targetVol(initalvol), targetMass(initalmass), targetEnergy(initalenergy), isL2_(isL2),
+        size_qf(qspace.GetSize()), size_gf(fespace.GetNDofs()), offset(4)
+   {
+      numConstraints = numConstraints_;
+      SetEqualityConstraint(massvec);
+      // SetInequalityConstraint(d_lo, d_hi);
+
+      SetSolutionBounds(xmin, xmax);
+
+      offset[0] = 0;
+      offset[1] = offset[0] + size_qf ;
+      offset[2] = offset[1] + size_qf;
+      offset[3] = offset[2] + size_gf;
+
+      // if (use_H1_semi)
+      // {
+      //    double dx = space.GetMesh()->GetElementSize(0, 0);
+      //    MPI_Allreduce(MPI_IN_PLACE, &dx, 1, MPI_DOUBLE,
+      //                  MPI_MIN, pos_final_.ParFESpace()->GetComm());
+      //    H1SemiNormWeight = dx * dx;
+      // }
+   }
+
+virtual double CalcObjective(const Vector &x) const
+   {
+      QuadratureFunction ind_0(&qspace_, x_initial.GetData());
+      QuadratureFunction rho_0(&qspace_, x_initial.GetData() + size_qf);
+      ParGridFunction    e_0  (&fespace_, x_initial.GetData() + 2*size_qf);
+
+      QuadratureFunction ind(&qspace_, x.GetData());
+      QuadratureFunction rho(&qspace_, x.GetData() + size_qf);
+      ParGridFunction    energy  (&fespace_, x.GetData() + 2*size_qf);
+
+      QuadratureFunction ind_diff(&qspace_);
+      QuadratureFunction roh_diff(&qspace_);
+      ParGridFunction    e_diff(&fespace_);
+
+      subtract( ind, ind_0, ind_diff);
+      subtract( rho, rho_0, roh_diff);
+      subtract( energy, e_0, e_diff);
+
+      //-------------------------------------------------------------------
+
+      real_t normind = ind_diff.Norml2();
+      real_t normindSq = normind * normind;
+
+      MPI_Allreduce(MPI_IN_PLACE, &normindSq, 1, MPI_DOUBLE, MPI_SUM,
+                  MPI_COMM_WORLD);
+      normindSq = 0.5 * normindSq;
+
+      //-------------------------------------------------------------------
+
+      real_t normroh = roh_diff.Norml2();
+      real_t normrohSq = normroh * normroh;
+
+      MPI_Allreduce(MPI_IN_PLACE, &normrohSq, 1, MPI_DOUBLE, MPI_SUM,
+                  MPI_COMM_WORLD);
+      normrohSq = 0.5 * normrohSq;
+
+      //-------------------------------------------------------------------
+
+      // L2 norm (0.5*(u_1-u_0)^2)
+      ParLinearForm dQdeta(&fespace_);
+      GridFunctionCoefficient e_diff_coeff(&e_diff);
+      ProductCoefficient e_diff_coeffsquared(e_diff_coeff, e_diff_coeff);
+      ProductCoefficient half_e_diff_coeffsquared(0.5, e_diff_coeffsquared);
+
+      auto *lfi_1 = new DomainLFIntegrator(half_e_diff_coeffsquared);
+      dQdeta.AddDomainIntegrator(lfi_1);
+      dQdeta.Assemble();
+
+      ::mfem::ParGridFunction oneGridFunction(&fespace_);
+      oneGridFunction = 1.0;
+
+      real_t val = dQdeta(oneGridFunction);
+
+      return normindSq + normrohSq + val;
+
+      //return 0.5 * normSq;
+   }
+
+   virtual void CalcObjectiveGrad(const Vector &x, Vector &grad) const
+   {
+      BlockVector ind_rho_e_grad(offset, Device::GetMemoryType());
+
+      QuadratureFunction ind_0(&qspace_, x_initial.GetData());
+      QuadratureFunction rho_0(&qspace_, x_initial.GetData() + size_qf);
+      ParGridFunction    e_0  (&fespace_, x_initial.GetData() + 2*size_qf);
+
+      QuadratureFunction ind(&qspace_, x.GetData());
+      QuadratureFunction rho(&qspace_, x.GetData() + size_qf);
+      ParGridFunction    energy  (&fespace_, x.GetData() + 2*size_qf);
+
+      QuadratureFunction ind_diff(&qspace_);
+      QuadratureFunction roh_diff(&qspace_);
+      ParGridFunction    e_diff(&fespace_);
+
+      subtract( ind, ind_0, ind_diff);
+      subtract( rho, rho_0, roh_diff);
+      subtract( energy, e_0, e_diff);
+
+      //------------------------------------------------------------------------
+
+      if(isL2_)
+      {
+         // auto mesh = qspace.GetMesh();
+         // const int NE = mesh->GetNE();
+
+         // Array<int> offset(NE+1);
+         // offset[0] = 0;
+
+         // for (int e = 0; e < NE; e++)
+         // {            
+         //    const IntegrationRule &ir = qspace.GetElementIntRule(e);
+         //    const int nqp = ir.GetNPoints();
+
+         //    offset[e+1] = offset[e] + nqp;
+         // }
+
+         // for (int e = 0; e < NE; e++)
+         // {
+         //    const int s_offset = offset[e];
+
+         //    IsoparametricTransformation Tr;
+         //    mesh->GetElementTransformation(e, pos_final, &Tr);
+
+         //    const IntegrationRule &ir = qspace.GetElementIntRule(e);
+         //    const int nqp = ir.GetNPoints();
+
+         //    for (int q = 0; q < nqp; q++)
+         //    {
+         //       const IntegrationPoint &ip = ir.IntPoint(q);
+         //       Tr.SetIntPoint(&ip);
+
+         //       x_diff[s_offset+q] = Tr.Weight() * ip.weight * x_diff[s_offset+q];
+         //    }
+         // }
+      }
+
+      //------------------------------------------------------------------------
+
+      if(isL2_)
+      {
+         // auto mesh = qspace.GetMesh();
+         // const int NE = mesh->GetNE();
+
+         // Array<int> offset(NE+1);
+         // offset[0] = 0;
+
+         // for (int e = 0; e < NE; e++)
+         // {            
+         //    const IntegrationRule &ir = qspace.GetElementIntRule(e);
+         //    const int nqp = ir.GetNPoints();
+
+         //    offset[e+1] = offset[e] + nqp;
+         // }
+
+         // for (int e = 0; e < NE; e++)
+         // {
+         //    const int s_offset = offset[e];
+
+         //    IsoparametricTransformation Tr;
+         //    mesh->GetElementTransformation(e, pos_final, &Tr);
+
+         //    const IntegrationRule &ir = qspace.GetElementIntRule(e);
+         //    const int nqp = ir.GetNPoints();
+
+         //    for (int q = 0; q < nqp; q++)
+         //    {
+         //       const IntegrationPoint &ip = ir.IntPoint(q);
+         //       Tr.SetIntPoint(&ip);
+
+         //       x_diff[s_offset+q] = Tr.Weight() * ip.weight * x_diff[s_offset+q];
+         //    }
+         // }
+      }
+
+      //------------------------------------------------------------------------
+
+
+      ParLinearForm dQdeta(&fespace_);
+      ParGridFunction    e_grad(&fespace_);
+      GridFunctionCoefficient e_diff_coeff(&e_diff);
+
+      auto *lfi_1 = new DomainLFIntegrator(e_diff_coeff);
+
+      dQdeta.AddDomainIntegrator(lfi_1);
+      dQdeta.Assemble();
+      dQdeta.ParallelAssemble(e_grad);
+
+
+      ind_rho_e_grad.GetBlock(0) = ind_diff;
+      ind_rho_e_grad.GetBlock(1) = roh_diff;
+      ind_rho_e_grad.GetBlock(2) = e_grad;
+
+      grad = ind_rho_e_grad;
+   }
+
+virtual void CalcConstraintGrad(const int constNumber, const Vector &x, Vector &grad) const
+   {
+      BlockVector ind_rho_e_grad(offset, Device::GetMemoryType());
+      QuadratureFunction ind_grad(&qspace_); ind_grad= 0.0;
+      QuadratureFunction rho_grad(&qspace_); rho_grad= 0.0;
+      ParGridFunction    e_grad(&fespace_);  e_grad= 0.0;
+
+      QuadratureFunction ind(&qspace_, x.GetData());
+      QuadratureFunction rho(&qspace_, x.GetData() + size_qf);
+      ParGridFunction    energy(&fespace_, x.GetData() + 2*size_qf);
+
+      grad = 0.0;
+
+      auto mesh = qspace_.GetMesh();
+      const int NE = mesh->GetNE();
+
+      Array<int> offsetGP(NE+1);
+      offsetGP[0] = 0;
+
+      for (int e = 0; e < NE; e++)
+      {            
+         const IntegrationRule &ir = qspace_.GetElementIntRule(e);
+         const int nqp = ir.GetNPoints();
+
+         offsetGP[e+1] = offsetGP[e] + nqp;
+      }
+
+      IsoparametricTransformation Tr;
+
+      for (int e = 0; e < NE; e++)
+      {
+         mesh->GetElementTransformation(e, pos_final, &Tr);
+
+         const IntegrationRule &ir = qspace_.GetElementIntRule(e);
+         const int nqp = ir.GetNPoints();
+
+         for (int q = 0; q < nqp; q++)
+         {
+            const IntegrationPoint &ip = ir.IntPoint(q);
+            Tr.SetIntPoint(&ip);
+
+            double w = Tr.Weight() * ip.weight;
+
+            if( constNumber == 0)
+            {
+               ind_grad[offsetGP[e]+q] = w;
+            }
+            else if( constNumber == 1)
+            {
+               ind_grad[offsetGP[e]+q] = w * rho[offsetGP[e]+q];
+               rho_grad[offsetGP[e]+q] = w * ind[offsetGP[e]+q];
+            }
+            else if( constNumber == 2)
+            {
+               double e_val = energy.GetValue(Tr, ip);
+               ind_grad[offsetGP[e]+q] = w * rho[offsetGP[e]+q] * e_val;
+               rho_grad[offsetGP[e]+q] = w * ind[offsetGP[e]+q] * e_val;
+            }
+            else{mfem_error("Constraint index does not exist.");}
+         }
+      }
+
+      if( constNumber == 2)
+      {
+         std::cout<<"constr 3"<<std::endl;
+         ParLinearForm energyGradLF(&fespace_);
+         mfem::LinearFormIntegrator *lfi_1 =
+             new mfem::RemhosIndRhoEHiOpProblem::EnergyGradIntegrator(ind, rho);
+
+         energyGradLF.AddDomainIntegrator(lfi_1);
+         energyGradLF.Assemble();
+         energyGradLF.ParallelAssemble(e_grad);
+      }
+
+      ind_rho_e_grad.GetBlock(0) = ind_grad;
+      ind_rho_e_grad.GetBlock(1) = rho_grad;
+      ind_rho_e_grad.GetBlock(2) = e_grad;
+
+      grad = ind_rho_e_grad;
+};
+
+virtual void CalcConstraint(const int constNumber, const Vector &x, Vector &constVal) const
+{
+      QuadratureFunction ind   (&qspace_, x.GetData());
+      QuadratureFunction rho   (&qspace_, x.GetData() + size_qf);
+      ParGridFunction    energy(&fespace_, x.GetData() + 2*size_qf);
+
+      if( constNumber == 0)
+      {
+         double vol_s = Integrate(pos_final, &ind, nullptr, nullptr);
+
+         constVal[0] = vol_s - targetVol;
+      }
+      else if( constNumber == 1)
+      {
+         double mass_s = Integrate(pos_final, &ind, &rho, nullptr);
+
+         constVal[0] = mass_s - targetMass;
+      }
+      else if( constNumber == 2)
+      {
+         double energy_s = Integrate(pos_final, &ind, &rho, &energy);
+
+         constVal[0] = energy_s - targetEnergy;
+      }
+      else{mfem_error("Constraint index does not exist.");}
+   };
 
 private:
 

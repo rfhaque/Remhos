@@ -562,6 +562,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
 
    // Extract initial data from the BlockVector.
    const int size_qf = qspace->GetSize();
+   int size_gf  = pfes_e->GetNDofs();
    Vector *ire_ptr = const_cast<Vector *>(&ind_rho_e_0);
    QuadratureFunction ind_0(qspace, ire_ptr->GetData()),
                       rho_0(qspace, ire_ptr->GetData() + size_qf);
@@ -651,6 +652,110 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    CalcQuadBounds(rho_0, pos_final, rho_min, rho_max);
    Vector e_min, e_max;
    CalcDOFBounds(e_0, *pfes_e, pos_final, e_min, e_max, true);
+
+   Array<int> offset(4);
+   offset[0] = 0;
+   offset[1] = offset[0] + size_qf ;
+   offset[2] = offset[1] + size_qf;
+   offset[3] = offset[2] + size_gf;
+
+   BlockVector x_min(offset);
+   BlockVector x_max(offset);
+
+   x_min.GetBlock(0) = ind_min;
+   x_min.GetBlock(1) = rho_min;
+   x_min.GetBlock(2) = e_min;
+   x_max.GetBlock(0) = ind_max;
+   x_max.GetBlock(1) = rho_max;
+   x_max.GetBlock(2) = e_max;
+
+   // mfem_error("fill x min and make sure all block vertors are true vetors");
+
+   if (opt_type == 0)
+   {
+      //u_final = u_interpolated;
+   }
+   else if (opt_type == 1)
+   {
+      *x = pos_final;
+      OptimizationSolver* optsolver = NULL;
+      {
+#ifdef MFEM_USE_HIOP
+         optsolver = new HiopNlpOptimizer(MPI_COMM_WORLD);
+#else
+         MFEM_ABORT("MFEM is not built with HiOp support!");
+#endif
+      }
+
+      const int max_iter = 200;
+      const double rtol = 1.e-3;
+      const double atol = 1.e-3;
+      Vector y_out(ind_rho_e.Size());
+
+      const int numContraints = 3;
+      RemhosIndRhoEHiOpProblem ot_prob(*qspace,
+                                       *pfes_e,
+                                       pos_final,
+                                       ind_rho_e_0,
+                                       ind_rho_e,
+                                       x_min,
+                                       x_max,
+                                       volume_0,
+                                       mass_0,
+                                       energy_0,
+                                       numContraints,
+                                       false,
+                                       false);
+
+      optsolver->SetOptimizationProblem(ot_prob);
+
+      optsolver->SetMaxIter(max_iter);
+      optsolver->SetAbsTol(atol);
+      optsolver->SetRelTol(rtol);
+      optsolver->SetPrintLevel(3);
+      optsolver->Mult(ind_rho_e, y_out);
+
+      // // fix parallel. u_interpolated and y_out should be true vectors
+      ind_rho_e = y_out;
+
+      mfem::QuadratureFunction ind_opt(qspace, ind_rho_e.GetData());
+      mfem::QuadratureFunction rho_opt(qspace, ind_rho_e.GetData() + size_qf);
+      mfem::ParGridFunction    energy_opt(pfes_e, ind_rho_e.GetData() + 2*size_qf);
+
+      delete optsolver;
+
+      const double volume_f_opt = Integrate(pos_final, &ind_opt,
+                                      nullptr, nullptr);
+      const double mass_f_opt   = Integrate(pos_final, &ind_opt, &rho_opt,
+                                            nullptr);
+      const double energy_f_opt = Integrate(pos_final, &ind_opt, &rho_opt, &energy_opt);
+ 
+
+   if (pmesh_init.GetMyRank() == 0)
+   {
+      std::cout << "Volume initial:             " << volume_0 << std::endl
+                << "Volume interpolated:        " << volume_f_opt << std::endl
+                << "Volume interpolated diff:   "
+                << fabs(volume_0 - volume_f_opt) << endl
+                << "Volume interpolated diff %: "
+                << fabs(volume_0 - volume_f_opt) / volume_0 * 100
+                << endl << "*\n"
+                << "Mass initial:               " << mass_0 << std::endl
+                << "Mass interpolated:          " << mass_f_opt << std::endl
+                << "Mass interpolated diff:     "
+                << fabs(mass_0 - mass_f_opt) << endl
+                << "Mass interpolated diff %: "
+                << fabs(mass_0 - mass_f_opt) / mass_0 * 100
+                << endl << "*\n"
+                << "Energy initial:             " << energy_0 << std::endl
+                << "Energy interpolated:        " << energy_f_opt << std::endl
+                << "Energy interpolated diff:   "
+                << fabs(energy_0 - energy_f_opt) << endl
+                << "Energy interpolated diff %: "
+                << fabs(energy_0 - energy_f_opt) / energy_0 * 100
+                << endl;
+   }
+   }
 
    // Optimize ire_final here.
    // ...

@@ -21,6 +21,48 @@ using namespace std;
 
 namespace mfem
 {
+RemhosIndRhoEHiOpProblem::EnergyGradIntegrator::EnergyGradIntegrator(
+  const mfem::QuadratureFunction &ind, const mfem::QuadratureFunction &rho)
+  : ind_(&ind), rho_(&rho) 
+  {}
+
+void RemhosIndRhoEHiOpProblem::EnergyGradIntegrator::AssembleRHSElementVect(
+  const FiniteElement &el, ElementTransformation &T, Vector &elvect)
+{
+  // grab sizes
+  int dof = el.GetDof();
+  int dim = el.GetDim();
+  int eleIndex = T.ElementNo;
+
+  // initialize storage
+  Vector N(dof);
+
+  // output vector
+  elvect.SetSize(dof*dim);
+  elvect = 0.0;
+
+  const IntegrationRule *ir = IntRule;
+  const int nqp = ir->GetNPoints();
+
+  Vector ind_vals(nqp), rho_vals(nqp);
+  ind_->GetValues(eleIndex, ind_vals);
+  rho_->GetValues(eleIndex, rho_vals);
+
+  // loop over integration points
+  for (int i = 0; i < ir->GetNPoints(); i++)
+  {
+    // set current integration point
+    const IntegrationPoint &ip = ir->IntPoint(i);
+    T.SetIntPoint(&ip);
+
+    // evaluate gaussian integration weight
+    double w = ip.weight * T.Weight();
+
+    el.CalcShape(ip, N);
+
+    elvect.Add(w * ind_vals[i] * rho_vals[i] , N);
+  }
+}
 
 
 } // namespace mfem
