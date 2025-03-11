@@ -609,15 +609,16 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
 
    // Report conservation errors of ire_final.
    const double volume_0 = Integrate(*pmesh_init.GetNodes(), &ind_0,
-                                     nullptr, nullptr),
-                           volume_f = Integrate(pos_final, &ind,
-                                      nullptr, nullptr),
-                                      mass_0   = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0,
-                                         nullptr),
-                                         mass_f   = Integrate(pos_final, &ind, &rho,
-                                            nullptr),
-                                            energy_0 = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0, &e_0),
-                                            energy_f = Integrate(pos_final, &ind, &rho, &e);
+                                     nullptr, nullptr);
+   const double volume_f = Integrate(pos_final, &ind,
+                                     nullptr, nullptr);
+   const double mass_0   = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0,
+                                     nullptr);
+   const double mass_f   = Integrate(pos_final, &ind, &rho,
+                                     nullptr);
+   const double energy_0 = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0, &e_0);
+   const double energy_f = Integrate(pos_final, &ind, &rho, &e);
+
    if (pmesh_init.GetMyRank() == 0)
    {
       std::cout << "Volume initial:             " << volume_0 << std::endl
@@ -716,43 +717,79 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
       // // fix parallel. u_interpolated and y_out should be true vectors
       ind_rho_e = y_out;
 
-      mfem::QuadratureFunction ind_opt(qspace, ind_rho_e.GetData());
-      mfem::QuadratureFunction rho_opt(qspace, ind_rho_e.GetData() + size_qf);
-      mfem::ParGridFunction    energy_opt(pfes_e, ind_rho_e.GetData() + 2*size_qf);
-
       delete optsolver;
 
-      const double volume_f_opt = Integrate(pos_final, &ind_opt,
-                                      nullptr, nullptr);
-      const double mass_f_opt   = Integrate(pos_final, &ind_opt, &rho_opt,
-                                            nullptr);
-      const double energy_f_opt = Integrate(pos_final, &ind_opt, &rho_opt, &energy_opt);
- 
+   }
+   else if (opt_type == 4)
+   {
 
-   if (pmesh_init.GetMyRank() == 0)
+      Vector target_volume(3);
+      target_volume[0] = volume_0;
+      target_volume[1] = mass_0;
+      target_volume[2] = energy_0;
+      IndRhoEVolumeProjector projector(target_volume, pos_final, *qspace, *pfes_e, ind_rho_e);
+      Vector psi(ind_rho_e);
+      Vector search_l(3), search_r(3), lambda(3);
+      search_l = infinity(); search_r = -infinity();
+      int offset = 0;
+      for (int i=0; i<ind.Size(); i++)
+      {
+         psi[i] = inv_sigmoid(psi[i], ind_min[i], ind_max[i]);
+         search_l[0] = std::min(search_l[0], psi[i]);
+         search_r[0] = std::max(search_r[0], psi[i]);
+      }
+      offset += ind.Size();
+      for (int i=0; i<rho.Size(); i++)
+      {
+         psi[offset + i] = inv_sigmoid(psi[offset + i], rho_min[i], rho_max[i]);
+         search_l[1] = std::min(search_l[1], psi[offset + i]);
+         search_r[1] = std::max(search_r[1], psi[offset + i]);
+      }
+      offset += rho.Size();
+      for (int i=0; i<e.Size(); i++)
+      {
+         psi[offset + i] = inv_sigmoid(psi[offset + i], e_min[i], e_max[i]);
+         search_l[2] = std::min(search_l[2], psi[offset + i]);
+         search_r[2] = std::max(search_r[2], psi[offset + i]);
+      }
+      MPI_Allreduce(MPI_IN_PLACE, &search_l[0], 3, MFEM_MPI_REAL_T, MPI_MIN,
+                    pmesh_init.GetComm());
+      MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 3, MFEM_MPI_REAL_T, MPI_MAX,
+                    pmesh_init.GetComm());
+      projector.SetVerbose(2);
+      projector.Apply(psi, x_min, x_max, 1.0, search_l, search_r, lambda, max_iter);
+   }
+   const double volume_f_opt = Integrate(pos_final, &ind,
+                                         nullptr, nullptr);
+   const double mass_f_opt   = Integrate(pos_final, &ind, &rho,
+                                         nullptr);
+   const double energy_f_opt = Integrate(pos_final, &ind, &rho,
+                                         &e);
+
+
+   if (Mpi::Root())
    {
       std::cout << "Volume initial:             " << volume_0 << std::endl
-                << "Volume interpolated:        " << volume_f_opt << std::endl
-                << "Volume interpolated diff:   "
-                << fabs(volume_0 - volume_f_opt) << endl
-                << "Volume interpolated diff %: "
-                << fabs(volume_0 - volume_f_opt) / volume_0 * 100
+                << "Volume optimized:        " << volume_f_opt << std::endl
+                << "Volume optimized diff:   "
+                << (volume_f_opt - volume_0) << endl
+                << "Volume optimized diff %: "
+                << (volume_f_opt - volume_0) / volume_0 * 100
                 << endl << "*\n"
                 << "Mass initial:               " << mass_0 << std::endl
-                << "Mass interpolated:          " << mass_f_opt << std::endl
-                << "Mass interpolated diff:     "
-                << fabs(mass_0 - mass_f_opt) << endl
-                << "Mass interpolated diff %: "
-                << fabs(mass_0 - mass_f_opt) / mass_0 * 100
+                << "Mass optimized:          " << mass_f_opt << std::endl
+                << "Mass optimized diff:     "
+                << (mass_f_opt - mass_0) << endl
+                << "Mass optimized diff %: "
+                << (mass_f_opt - mass_0) / mass_0 * 100
                 << endl << "*\n"
                 << "Energy initial:             " << energy_0 << std::endl
-                << "Energy interpolated:        " << energy_f_opt << std::endl
-                << "Energy interpolated diff:   "
-                << fabs(energy_0 - energy_f_opt) << endl
-                << "Energy interpolated diff %: "
-                << fabs(energy_0 - energy_f_opt) / energy_0 * 100
+                << "Energy optimized:        " << energy_f_opt << std::endl
+                << "Energy optimized diff:   "
+                << (energy_f_opt- energy_0) << endl
+                << "Energy optimized diff %: "
+                << (energy_f_opt- energy_0) / energy_0 * 100
                 << endl;
-   }
    }
 
    // Optimize ire_final here.

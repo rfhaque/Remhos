@@ -152,7 +152,7 @@ class LatentVolumeProjector
 {
 private:
 protected:
-   const real_t vdim;
+   const int vdim;
    const Vector &targetVolume;
    FiniteElementSpace *fespace=nullptr;
    QuadratureSpace *qspace=nullptr;
@@ -196,7 +196,6 @@ private:
    const Vector &pos;
    std::unique_ptr<ParGridFunction> primal_gf;
    std::unique_ptr<QuadratureFunction> primal_qf;
-   std::unique_ptr<ParLinearForm> integrator;
    int verbose = 0;
 public:
    ScalarLatentVolumeProjector(const Vector &targetVolume,
@@ -380,6 +379,351 @@ public:
    }
 };
 
+class IndRhoEVolumeProjector : public LatentVolumeProjector
+{
+private:
+   Vector &primal;
+   Vector ind_vec;
+   Vector rho_vec;
+   Vector E_vec;
+   const Vector &pos;
+   std::unique_ptr<QuadratureFunction> ind_qf;
+   std::unique_ptr<QuadratureFunction> rho_qf;
+   std::unique_ptr<ParGridFunction> E_gf;
+   int verbose = 0;
+public:
+   void SetVerbose(int lv=1) { verbose = lv; }
+
+   IndRhoEVolumeProjector(const Vector &targetVolume,
+                          const Vector &pos,
+                          QuadratureSpaceBase &qspace,
+                          ParFiniteElementSpace &fes,
+                          Vector &primal)
+      : LatentVolumeProjector(targetVolume, qspace), primal(primal),
+        pos(pos)
+   {
+      int qsize = qspace.GetSize();
+      ind_qf.reset(new QuadratureFunction(this->qspace, primal.GetData()));
+      rho_qf.reset(new QuadratureFunction(this->qspace, primal.GetData() + qsize));
+      E_gf.reset(new ParGridFunction(&fes, primal.GetData() + 2*qsize));
+      ind_vec.SetDataAndSize(primal.GetData(), qsize);
+      rho_vec.SetDataAndSize(primal.GetData() + qsize, qsize);
+      E_vec.SetDataAndSize(primal.GetData() + 2*qsize, primal.Size() - 2*qsize);
+   }
+
+   real_t calculateIndMass(const QuadratureFunction &ind)
+   {
+      Mesh *mesh = qspace->GetMesh();
+      const int NE = mesh->GetNE();
+      real_t integral = 0.0;
+      for (int e = 0; e < NE; e++)
+      {
+         const IntegrationRule &ir = qspace->GetElementIntRule(e);
+         const int nqp = ir.GetNPoints();
+
+         // Transformation w.r.t. the given mesh positions.
+         IsoparametricTransformation Tr;
+         mesh->GetElementTransformation(e, pos, &Tr);
+
+         Vector ind_vals(nqp);
+         ind.GetValues(e, ind_vals);
+
+         for (int q = 0; q < nqp; q++)
+         {
+            const IntegrationPoint &ip = ir.IntPoint(q);
+            Tr.SetIntPoint(&ip);
+            integral += Tr.Weight() * ip.weight * ind_vals(q);
+         }
+      }
+      MPI_Allreduce(MPI_IN_PLACE, &integral, 1, MPI_DOUBLE, MPI_SUM, comm);
+      return integral;
+   }
+
+   real_t calculateRhoMass(const QuadratureFunction &ind,
+                           const QuadratureFunction &rho)
+   {
+      Mesh *mesh = qspace->GetMesh();
+      const int NE = mesh->GetNE();
+      real_t integral = 0.0;
+      for (int e = 0; e < NE; e++)
+      {
+         const IntegrationRule &ir = qspace->GetElementIntRule(e);
+         const int nqp = ir.GetNPoints();
+
+         // Transformation w.r.t. the given mesh positions.
+         IsoparametricTransformation Tr;
+         mesh->GetElementTransformation(e, pos, &Tr);
+
+         Vector ind_vals(nqp);
+         Vector rho_vals(nqp);
+         ind.GetValues(e, ind_vals);
+         rho.GetValues(e, rho_vals);
+
+         for (int q = 0; q < nqp; q++)
+         {
+            const IntegrationPoint &ip = ir.IntPoint(q);
+            Tr.SetIntPoint(&ip);
+            integral += Tr.Weight() * ip.weight * rho_vals(q)*ind_vals(q);
+         }
+      }
+      MPI_Allreduce(MPI_IN_PLACE, &integral, 1, MPI_DOUBLE, MPI_SUM, comm);
+      return integral;
+   }
+
+   real_t calculateEMass(const QuadratureFunction &ind,
+                         const QuadratureFunction &rho, const ParGridFunction &E)
+   {
+      Mesh *mesh = qspace->GetMesh();
+      const int NE = mesh->GetNE();
+      real_t integral = 0.0;
+      for (int e = 0; e < NE; e++)
+      {
+         const IntegrationRule &ir = qspace->GetElementIntRule(e);
+         const int nqp = ir.GetNPoints();
+
+         // Transformation w.r.t. the given mesh positions.
+         IsoparametricTransformation Tr;
+         mesh->GetElementTransformation(e, pos, &Tr);
+
+         Vector ind_vals(nqp);
+         Vector rho_vals(nqp);
+         Vector E_vals(nqp);
+         rho.GetValues(e, rho_vals);
+         ind.GetValues(e, ind_vals);
+         E.GetValues(e, ir, E_vals);
+
+         for (int q = 0; q < nqp; q++)
+         {
+            const IntegrationPoint &ip = ir.IntPoint(q);
+            Tr.SetIntPoint(&ip);
+            integral += Tr.Weight() * ip.weight * rho_vals(q)*ind_vals(q)*E_vals(q);
+         }
+      }
+      MPI_Allreduce(MPI_IN_PLACE, &integral, 1, MPI_DOUBLE, MPI_SUM, comm);
+      return integral;
+   }
+
+   real_t calculateShiftedIndMass(const real_t shift, const Vector &ind_latent,
+                                  const Vector &ind_lower, const Vector &ind_upper)
+   {
+      const bool use_dev = primal.UseDevice() || ind_latent.UseDevice();
+      const int N = ind_vec.Size();
+      auto ind_rw = ind_vec.ReadWrite(use_dev);
+      auto x_r = ind_latent.Read(use_dev);
+      auto l_r = ind_lower.Read(use_dev);
+      auto u_r = ind_upper.Read(use_dev);
+      mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { ind_rw[i] = sigmoid(x_r[i] + shift, l_r[i], u_r[i]); });
+      return calculateIndMass(*ind_qf);
+   }
+
+   real_t calculateShiftedRhoMass(const real_t shift, const Vector &rho_latent,
+                                  const Vector &rho_lower, const Vector &rho_upper)
+   {
+      const bool use_dev = primal.UseDevice() || rho_latent.UseDevice();
+      const int N = rho_vec.Size();
+      auto rho_rw = rho_vec.ReadWrite(use_dev);
+      auto x_r = rho_latent.Read(use_dev);
+      auto l_r = rho_lower.Read(use_dev);
+      auto u_r = rho_upper.Read(use_dev);
+      mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { rho_rw[i] = sigmoid(x_r[i] + shift, l_r[i], u_r[i]); });
+      return calculateRhoMass(*ind_qf, *rho_qf);
+   }
+
+   real_t calculateShiftedEMass(const real_t shift, const Vector &E_latent,
+                                const Vector &E_lower, const Vector &E_upper)
+   {
+      const bool use_dev = primal.UseDevice() || E_latent.UseDevice();
+      const int N = rho_vec.Size();
+      auto E_rw = E_vec.ReadWrite(use_dev);
+      auto x_r = E_latent.Read(use_dev);
+      auto l_r = E_lower.Read(use_dev);
+      auto u_r = E_upper.Read(use_dev);
+      mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE (int i) { E_rw[i] = sigmoid(x_r[i] + shift, l_r[i], u_r[i]); });
+      return calculateEMass(*ind_qf, *rho_qf, *E_gf);
+   }
+
+   real_t calculateShiftedMass(const int i, const real_t shift,
+                               const Vector &ind_latent,
+                               const Vector &rho_latent, const Vector &E_latent,
+                               const Vector &ind_lower, const Vector &ind_upper,
+                               const Vector &rho_lower, const Vector &rho_upper,
+                               const Vector &E_lower, const Vector &E_upper)
+   {
+      if (i == 0)
+      {
+         return calculateShiftedIndMass(shift, ind_latent, ind_lower, ind_upper);
+      }
+      else if (i == 1)
+      {
+         return calculateShiftedRhoMass(shift, rho_latent, rho_lower, rho_upper);
+      }
+      else
+      {
+         return calculateShiftedEMass(shift, E_latent, E_lower, E_upper);
+      }
+   }
+
+   void Apply(Vector &x_all, const Vector &lower, const Vector &upper,
+              const real_t step_size, const Vector &search_l, const Vector &search_r,
+              Vector &lambda, int max_iter) override
+   {
+      lambda.SetSize(3);
+      int qsize = this->qspace->GetSize();
+
+      const Vector ind_lower(lower.GetData(), qsize);
+      const Vector ind_upper(upper.GetData(), qsize);
+
+      const Vector rho_lower(lower.GetData() + qsize, qsize);
+      const Vector rho_upper(upper.GetData() + qsize, qsize);
+
+      const Vector E_lower(lower.GetData() + 2*qsize, x_all.Size() - 2*qsize);
+      const Vector E_upper(upper.GetData() + 2*qsize, x_all.Size() - 2*qsize);
+
+      Vector x_ind(x_all.GetData(), qsize);
+      Vector x_rho(x_all.GetData() + qsize, qsize);
+      Vector x_E(x_all.GetData() + 2*qsize, x_all.Size() - 2*qsize);
+      Vector x;
+      for (int i=0; i<3; i++)
+      {
+         if (i==0)
+         {
+            x.SetDataAndSize(x_all.GetData(), qsize);
+         }
+         else if (i==1)
+         {
+            x.SetDataAndSize(x_all.GetData() + qsize, qsize);
+         }
+         else
+         {
+            x.SetDataAndSize(x_all.GetData() + 2*qsize, x_all.Size() - 2*qsize);
+         }
+         real_t lambda_lower = search_l[i];
+         real_t lambda_upper = search_r[i];
+
+         real_t vol, vol_lower, vol_upper;
+         real_t mid;
+         int trial = 0;
+         int max_trial = 3;
+         for (; trial < max_trial; trial++)
+         {
+            mid = lambda_lower;
+            vol_lower = calculateShiftedMass(i, mid, x_ind, x_rho, x_E,
+                                             ind_lower, ind_upper,
+                                             rho_lower, rho_upper,
+                                             E_lower, E_upper);
+            if (vol_lower > targetVolume[i])
+            {
+               if (Mpi::Root())
+               {
+
+                  out << i << ": Initial lower bound not feasible. Lower: " << vol_lower << ", "
+                      <<
+                  "Target: " << targetVolume[i] << std::endl;
+               }
+               lambda_lower = lambda_lower + (lambda_lower - lambda_upper);
+            }
+            else { break;}
+         }
+         if (trial == max_trial)
+         {
+            if (Mpi::Root())
+            {
+               out << i << ": Initial lower bound not feasible. Stop Searching" << std::endl;
+            }
+            lambda_upper = lambda_lower;
+         }
+         for (; trial < max_trial; trial++)
+         {
+            mid = lambda_upper;
+            vol_upper = calculateShiftedMass(i, mid, x_ind, x_rho, x_E,
+                                             ind_lower, ind_upper,
+                                             rho_lower, rho_upper,
+                                             E_lower, E_upper);
+            if (vol_upper < targetVolume[i])
+            {
+               if (Mpi::Root())
+               {
+                  out << i << ": Initial upper bound not feasible. Upper: " << vol_upper << ", "
+                      <<
+                  "Target: " << targetVolume[i] << std::endl;
+               }
+               lambda_upper = lambda_upper + (lambda_upper - lambda_lower);
+            }
+            else { break; }
+         }
+         if (trial == max_trial)
+         {
+            if (Mpi::Root())
+            {
+               out << i << ": Failed to find feasible bound. " << vol_lower << ", "
+                   << vol_upper << ", " <<
+                               "Target: " << targetVolume[i] << std::endl;
+            }
+            lambda_lower = lambda_upper;
+         }
+         vol_lower = vol_lower - targetVolume[i];
+         vol_upper = vol_upper - targetVolume[i];
+         int iter = 0;
+         bool was_negative = false;
+         mid = lambda_lower + lambda_upper;
+
+         // Regula Falsi method with Illinois update
+         while (lambda_upper - lambda_lower > 1e-08 && iter < max_iter)
+         {
+            iter++;
+            // convex combination of upper and lower bracket
+            mid = (vol_upper*lambda_lower - vol_lower*lambda_upper)/(vol_upper - vol_lower);
+
+            if (verbose > 1 && Mpi::Root())
+            {
+               out << " mid : " << mid
+                   << " ( interval: " << lambda_upper - lambda_lower << " )"
+                   << ": vol-diff = " << std::flush;
+            }
+            vol = calculateShiftedMass(i, mid, x_ind, x_rho, x_E,
+                                       ind_lower, ind_upper,
+                                       rho_lower, rho_upper,
+                                       E_lower, E_upper);
+            if (verbose > 1 && Mpi::Root())
+            {
+               out << vol - targetVolume[i] << std::endl;
+            }
+            if (vol < targetVolume[i])
+            {
+               vol_lower = vol - targetVolume[i];
+               lambda_lower = mid;
+               // Illinois update
+               if (iter > 1 && was_negative)
+               {
+                  vol_upper = 0.5*vol_upper;
+               }
+               was_negative = true;
+            }
+            else
+            {
+               lambda_upper = mid;
+               vol_upper = vol - targetVolume[i];
+               if (iter > 1 && !was_negative)
+               {
+                  vol_lower = 0.5*vol_lower;
+               }
+               was_negative = false;
+            }
+         }
+         if (verbose && Mpi::Root())
+         {
+            out << "Volume projection converged in " << iter << " iterations\n"
+                << "  with volume diff: " << vol - targetVolume[i]
+                << " (" << std::fixed << std::setprecision(4)
+                << (vol - targetVolume[i])/targetVolume[i]*100 << "%)" << std::endl;
+         }
+
+         lambda[i] = mid;
+         x += step_size*mid;
+      }
+   }
+};
+
 class BoxMirrorDescent
 {
 private:
@@ -466,7 +810,8 @@ public:
                           projector->GetComm());
             MPI_Allreduce(MPI_IN_PLACE, search_r.GetData(), 1, MFEM_MPI_REAL_T, MPI_MAX,
                           projector->GetComm());
-            projector->Apply(x, lower, upper, step_size, search_l, search_r, lambda, max_iter);
+            projector->Apply(x, lower, upper, step_size, search_l, search_r, lambda,
+                             max_iter);
          }
          UpdatePrimal(x);
          real_t val = obj.Eval(primal);
