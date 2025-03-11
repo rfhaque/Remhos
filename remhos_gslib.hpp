@@ -106,6 +106,7 @@ public:
 
    bool visualization = true;
    bool h1_seminorm   = false;
+   int  max_iter      = 100;
 };
 
 } // namespace mfem

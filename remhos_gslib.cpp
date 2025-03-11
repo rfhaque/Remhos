@@ -176,7 +176,6 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
 #endif
       }
 
-      const int max_iter = 20;
       const double rtol = 1.e-7;
       const double atol = 1.e-7;
       Vector y_out(u_interpolated.Size());
@@ -202,14 +201,14 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    else if (opt_type == 2)
    {
       MDSolver md(pfes_tmp, mass_0, u_interpolated, u_final_min, u_final_max);
-      md.Optimize(1000, 1000, 1000);
+      md.Optimize(1000, 1000, max_iter);
       md.SetFinal(u_final);
    }
    else if (opt_type == 3)
    {
       GridFunctionCoefficient u_interpolated_cf(&u_interpolated);
       L2Obj obj(*u_final.ParFESpace(), u_interpolated_cf);
-      BoxMirrorDescent md(obj, u_final, u_final_min, u_final_max);
+      BoxMirrorDescent md(obj, u_final, u_final_min, u_final_max, max_iter);
       Vector target_volume(1); target_volume[0] = mass_0;
       ScalarLatentVolumeProjector projector(target_volume, pos_final,
                                             *u_final.ParFESpace(), u_final);
@@ -238,7 +237,8 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 1, MFEM_MPI_REAL_T, MPI_MAX,
                     pmesh_init.GetComm());
       projector.SetVerbose(2);
-      projector.Apply(psi, u_final_min, u_final_max, 1.0, search_l, search_r, lambda);
+      projector.Apply(psi, u_final_min, u_final_max, 1.0, search_l, search_r,
+                      lambda, max_iter);
    }
 
    // Report masses.
@@ -338,7 +338,6 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
 #endif
       }
 
-      const int max_iter = 100;
       const double rtol = 1.e-6;
       const double atol = 1.e-6;
       Vector y_out(u_desing.Size());
@@ -367,7 +366,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       QuadratureFunction u_target(u);
       QDSolver qd(qspace_tmp, mass_0, u_target, u_min, u_max);
 
-      qd.Optimize(1000, 1000, 1000);
+      qd.Optimize(1000, 1000, max_iter);
       qd.SetFinal(u);
    }
    else if (opt_type == 3)
@@ -375,7 +374,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       QuadratureFunction u_target(u);
       QuadratureFunctionCoefficient u_target_cf(u_target);
       L2Obj obj(*u.GetSpace(), u_target_cf);
-      BoxMirrorDescent md(obj, u, u_min, u_max);
+      BoxMirrorDescent md(obj, u, u_min, u_max, max_iter);
       Vector target_volume(1); target_volume[0] = mass_0;
       ScalarLatentVolumeProjector projector(
          target_volume, pos_final, *u.GetSpace(), u);
@@ -388,8 +387,8 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    else if (opt_type == 4)
    {
       Vector target_volume(1); target_volume[0] = mass_0;
-      ScalarLatentVolumeProjector projector(target_volume, pos_final, *u.GetSpace(),
-                                            u);
+      ScalarLatentVolumeProjector projector(target_volume, pos_final,
+                                            *u.GetSpace(), u);
       QuadratureFunction psi(u);
       Vector search_l({infinity()}), search_r({-infinity()}), lambda(1);
       for (int i=0; i<psi.Size(); i++)
@@ -403,7 +402,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 1, MFEM_MPI_REAL_T, MPI_MAX,
                     pmesh_init.GetComm());
       projector.SetVerbose(2);
-      projector.Apply(psi, u_min, u_max, 1.0, search_l, search_r, lambda);
+      projector.Apply(psi, u_min, u_max, 1.0, search_l, search_r, lambda, max_iter);
    }
 
    // Report final masses.
@@ -509,7 +508,6 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
 #endif
       }
 
-      const int max_iter = 100;
       const double rtol = 1.e-7;
       const double atol = 1.e-7;
       Vector y_out(u.Size());
@@ -536,7 +534,7 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
       ParGridFunction u_interpolated(u);
       MDSolver md(pfes_tmp, mass, u_interpolated, u_final_min, u_final_max);
 
-      md.Optimize(100, 1000, 1000);
+      md.Optimize(100, 1000, max_iter);
       md.SetFinal(u);
    }
 
@@ -611,15 +609,16 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
 
    // Report conservation errors of ire_final.
    const double volume_0 = Integrate(*pmesh_init.GetNodes(), &ind_0,
-                                     nullptr, nullptr),
-                           volume_f = Integrate(pos_final, &ind,
-                                      nullptr, nullptr),
-                                      mass_0   = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0,
-                                         nullptr),
-                                         mass_f   = Integrate(pos_final, &ind, &rho,
-                                            nullptr),
-                                            energy_0 = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0, &e_0),
-                                            energy_f = Integrate(pos_final, &ind, &rho, &e);
+                                     nullptr, nullptr);
+   const double volume_f = Integrate(pos_final, &ind,
+                                     nullptr, nullptr);
+   const double mass_0   = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0,
+                                     nullptr);
+   const double mass_f   = Integrate(pos_final, &ind, &rho,
+                                     nullptr);
+   const double energy_0 = Integrate(*pmesh_init.GetNodes(), &ind_0, &rho_0, &e_0);
+   const double energy_f = Integrate(pos_final, &ind, &rho, &e);
+
    if (pmesh_init.GetMyRank() == 0)
    {
       std::cout << "Volume initial:             " << volume_0 << std::endl
@@ -727,47 +726,75 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
       // // fix parallel. u_interpolated and y_out should be true vectors
       ind_rho_e = y_out;
 
-      mfem::QuadratureFunction ind_opt(qspace, ind_rho_e.GetData());
-      mfem::QuadratureFunction rho_opt(qspace, ind_rho_e.GetData() + size_qf);
-      mfem::ParGridFunction    energy_opt(pfes_e, ind_rho_e.GetData() + 2*size_qf);
-
       delete optsolver;
-
-      const double volume_f_opt = Integrate(pos_final, &ind_opt,
-                                      nullptr, nullptr);
-      const double mass_f_opt   = Integrate(pos_final, &ind_opt, &rho_opt,
-                                            nullptr);
-      const double energy_f_opt = Integrate(pos_final, &ind_opt, &rho_opt, &energy_opt);
- 
-
-   if (pmesh_init.GetMyRank() == 0)
+   }
+   else if (opt_type == 4)
    {
-      std::cout << "Volume initial:             " << volume_0 << std::endl
-                << "Volume interpolated:        " << volume_f_opt << std::endl
-                << "Volume interpolated diff:   "
-                << fabs(volume_0 - volume_f_opt) << endl
-                << "Volume interpolated diff %: "
-                << fabs(volume_0 - volume_f_opt) / volume_0 * 100
+      Vector target_volume(3);
+      target_volume[0] = volume_0;
+      target_volume[1] = mass_0;
+      target_volume[2] = energy_0;
+      IndRhoEVolumeProjector projector(target_volume, pos_final,
+                                       *qspace, *pfes_e, ind_rho_e);
+      Vector psi(ind_rho_e);
+      Vector search_l(3), search_r(3), lambda(3);
+      search_l = infinity(); search_r = -infinity();
+      int offset = 0;
+      for (int i=0; i<ind.Size(); i++)
+      {
+         psi[i] = inv_sigmoid(psi[i], ind_min[i], ind_max[i]);
+         search_l[0] = std::min(search_l[0], psi[i]);
+         search_r[0] = std::max(search_r[0], psi[i]);
+      }
+      offset += ind.Size();
+      for (int i=0; i<rho.Size(); i++)
+      {
+         psi[offset + i] = inv_sigmoid(psi[offset + i], rho_min[i], rho_max[i]);
+         search_l[1] = std::min(search_l[1], psi[offset + i]);
+         search_r[1] = std::max(search_r[1], psi[offset + i]);
+      }
+      offset += rho.Size();
+      for (int i=0; i<e.Size(); i++)
+      {
+         psi[offset + i] = inv_sigmoid(psi[offset + i], e_min[i], e_max[i]);
+         search_l[2] = std::min(search_l[2], psi[offset + i]);
+         search_r[2] = std::max(search_r[2], psi[offset + i]);
+      }
+      MPI_Allreduce(MPI_IN_PLACE, &search_l[0], 3, MFEM_MPI_REAL_T, MPI_MIN,
+                    pmesh_init.GetComm());
+      MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 3, MFEM_MPI_REAL_T, MPI_MAX,
+                    pmesh_init.GetComm());
+      projector.SetVerbose(2);
+      projector.Apply(psi, x_min, x_max, 1.0, search_l, search_r, lambda, max_iter);
+   }
+
+   const double volume_f_opt = Integrate(pos_final, &ind, nullptr, nullptr);
+   const double mass_f_opt   = Integrate(pos_final, &ind, &rho,    nullptr);
+   const double energy_f_opt = Integrate(pos_final, &ind, &rho,    &e);
+   if (Mpi::Root())
+   {
+      std::cout << "Volume initial:          " << volume_0 << std::endl
+                << "Volume optimized:        " << volume_f_opt << std::endl
+                << "Volume optimized diff:   "
+                << (volume_f_opt - volume_0) << endl
+                << "Volume optimized diff %: "
+                << (volume_f_opt - volume_0) / volume_0 * 100
                 << endl << "*\n"
-                << "Mass initial:               " << mass_0 << std::endl
-                << "Mass interpolated:          " << mass_f_opt << std::endl
-                << "Mass interpolated diff:     "
-                << fabs(mass_0 - mass_f_opt) << endl
-                << "Mass interpolated diff %: "
-                << fabs(mass_0 - mass_f_opt) / mass_0 * 100
+                << "Mass initial:            " << mass_0 << std::endl
+                << "Mass optimized:          " << mass_f_opt << std::endl
+                << "Mass optimized diff:     "
+                << (mass_f_opt - mass_0) << endl
+                << "Mass optimized diff %: "
+                << (mass_f_opt - mass_0) / mass_0 * 100
                 << endl << "*\n"
-                << "Energy initial:             " << energy_0 << std::endl
-                << "Energy interpolated:        " << energy_f_opt << std::endl
-                << "Energy interpolated diff:   "
-                << fabs(energy_0 - energy_f_opt) << endl
-                << "Energy interpolated diff %: "
-                << fabs(energy_0 - energy_f_opt) / energy_0 * 100
+                << "Energy initial:          " << energy_0 << std::endl
+                << "Energy optimized:        " << energy_f_opt << std::endl
+                << "Energy optimized diff:   "
+                << (energy_f_opt- energy_0) << endl
+                << "Energy optimized diff %: "
+                << (energy_f_opt- energy_0) / energy_0 * 100
                 << endl;
    }
-   }
-
-   // Optimize ire_final here.
-   // ...
 }
 
 void InterpolationRemap::GetDOFPositions(const ParFiniteElementSpace &pfes,
