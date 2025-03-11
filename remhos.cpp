@@ -161,6 +161,7 @@ int main(int argc, char *argv[])
    bool project_analytic          = false;
    int optimization_type = 0;
    bool h1_seminorm = false;
+   int max_opt_iter = 100;
    int bounds_type = 0;
    bool pa = false;
    bool next_gen_full = false;
@@ -226,6 +227,8 @@ int main(int argc, char *argv[])
    args.AddOption(&h1_seminorm, "-h1s", "--h1semi", "-no-h1s",
                   "--no-h1semi",
                   "Use the H1-seminorm term in optimization.");
+   args.AddOption(&max_opt_iter, "-mi", "--max-optimization-iterations",
+                  "Maximum optimization iterations");
    args.AddOption(&bounds_type, "-bt", "--bounds-type",
                   "Bounds stencil type: 0 - overlapping elements,\n\t"
                   "                     1 - matrix sparsity pattern.");
@@ -939,6 +942,7 @@ int main(int argc, char *argv[])
       InterpolationRemap interpolator(pmesh);
       interpolator.visualization = visualization;
       interpolator.h1_seminorm   = h1_seminorm;
+      interpolator.max_iter      = max_opt_iter;
       ParGridFunction u_gf(&pfes);
 
       if (project_analytic)
@@ -1002,6 +1006,7 @@ int main(int argc, char *argv[])
       InterpolationRemap interpolator(pmesh);
       interpolator.visualization = visualization;
       interpolator.h1_seminorm   = h1_seminorm;
+      interpolator.max_iter      = max_opt_iter;
       interpolator.Remap(u_qf, x_final, uu_qf, optimization_type);
 
       if (visualization)
@@ -1066,121 +1071,11 @@ int main(int argc, char *argv[])
       InterpolationRemap interpolator(pmesh);
       interpolator.visualization = visualization;
       interpolator.h1_seminorm   = h1_seminorm;
+      interpolator.max_iter      = max_opt_iter;
       interpolator.SetQuadratureSpace(qspace);
       interpolator.SetEnergyFESpace(pfes);
       interpolator.RemapIndRhoE(ind_rho_e_0, x_final,
                                 ind_rho_e, optimization_type);
-
-      QuadratureFunction ind(&qspace, ind_rho_e.GetBlock(0).GetData()),
-                         rho(&qspace, ind_rho_e.GetBlock(1).GetData());
-      ParGridFunction e(&pfes, ind_rho_e.GetBlock(2).GetData());
-
-      // Visualize final values.
-      if (visualization)
-      {
-         x = x_final;
-         VisQuadratureFunction(pmesh, ind, "ind QF", 0, 500);
-         VisQuadratureFunction(pmesh, rho, "rho QF", 400, 500);
-         socketstream sock_f;
-         VisualizeField(sock_f, "localhost", 19916, e, "e GF", 800, 500, 400, 400);
-      }
-
-      return 0;
-   }
-   if (mono_type == MonolithicSolverType::InterpolationQF)
-   {
-      const IntegrationRule &ir =
-          IntRules.Get(pmesh.GetElementBaseGeometry(0), 5);
-      QuadratureSpace qspace(pmesh, ir);
-      QuadratureFunction u_qf(qspace);
-      InitializeQuadratureFunction(u0, x0, u_qf);
-
-      if (visualization)
-      {
-         osockstream sol_sock(19916, "localhost");
-         sol_sock << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
-         sol_sock << "quadrature\n" << pmesh << u_qf << std::flush;
-         sol_sock << "window_title 'Initial QuadFunc'\n";
-         sol_sock << "window_geometry 400 0 400 400\n";
-         sol_sock << "keys rmj\n";
-         sol_sock.send();
-      }
-
-      QuadratureFunction uu_qf(qspace);
-      InterpolationRemap interpolator(pmesh);
-      interpolator.visualization = visualization;
-      interpolator.Remap(u_qf, x_final, uu_qf, optimization_type);
-
-      if (visualization)
-      {
-         x = x_final;
-         osockstream sol_sock_res(19916, "localhost");
-         sol_sock_res << "parallel " << pmesh.GetNRanks() << " " << myid << "\n";
-         sol_sock_res << "quadrature\n" << pmesh << uu_qf << std::flush;
-         sol_sock_res << "window_title 'Remapped QuadFunc'\n";
-         sol_sock_res << "window_geometry 1200 0 400 400\n";
-         sol_sock_res << "keys rmj\n";
-         sol_sock_res.send();
-
-         ParaViewDataCollection pvdc("QFremap_after_opt", &pmesh);
-         pvdc.SetDataFormat(VTKFormat::BINARY32);
-         pvdc.SetCycle(0);
-         pvdc.SetTime(1.0);
-         pvdc.RegisterQField("field", &uu_qf);
-         pvdc.Save();
-      }
-
-      return 0;
-   }
-
-   if (mono_type == MonolithicSolverType::InterpolationIndRhoE)
-   {
-      MFEM_VERIFY(dim == 2, "Not setup in 3D yet.");
-
-      const IntegrationRule &ir =
-          IntRules.Get(pmesh.GetElementBaseGeometry(0), 5);
-      QuadratureSpace qspace(pmesh, ir);
-
-      // Setup the BlockVector (ordered ind-rho-e).
-      const int size_qf = qspace.GetSize(),
-                size_gf = pfes.GetNDofs();
-      Array<int> offset(4);
-      offset[0] = 0;
-      offset[1] = offset[0] + size_qf;
-      offset[2] = offset[1] + size_qf;
-      offset[3] = offset[2] + size_gf;
-      BlockVector ind_rho_e_0(offset, Device::GetMemoryType());
-
-      QuadratureFunction ind_0(&qspace, ind_rho_e_0.GetBlock(0).GetData()),
-                         rho_0(&qspace, ind_rho_e_0.GetBlock(1).GetData());
-      ParGridFunction e_0(&pfes, ind_rho_e_0.GetBlock(2).GetData());
-
-      // Initialize only in the support of ind_0.
-      Array<bool> ind_0_bool_el, ind_0_bool_dofs;
-      ComputeBoolIndicators(pmesh.GetNE(), u, ind_0_bool_el, ind_0_bool_dofs);
-      BoolFunctionCoefficient rho_0_coeff(s0_function, ind_0_bool_el),
-                              e_0_coeff(q0_function, ind_0_bool_el);
-      InitializeQuadratureFunction(u0, x0, ind_0);
-      InitializeQuadratureFunction(rho_0_coeff, x0, rho_0);
-      e_0.ProjectCoefficient(e_0_coeff);
-
-      // Visualize initial values.
-      if (visualization)
-      {
-         VisQuadratureFunction(pmesh, ind_0, "ind_0 QF", 0, 500);
-         VisQuadratureFunction(pmesh, rho_0, "rho_0 QF", 400, 500);
-         socketstream sock;
-         VisualizeField(sock, "localhost", 19916, e_0, "e_0 GF",
-                        800, 500, 400, 400);
-      }
-
-      // Remap.
-      BlockVector ind_rho_e(offset);
-      InterpolationRemap interpolator(pmesh);
-      interpolator.visualization = visualization;
-      interpolator.SetQuadratureSpace(qspace);
-      interpolator.SetEnergyFESpace(pfes);
-      interpolator.RemapIndRhoE(ind_rho_e_0, x_final, ind_rho_e, optimization_type);
 
       QuadratureFunction ind(&qspace, ind_rho_e.GetBlock(0).GetData()),
                          rho(&qspace, ind_rho_e.GetBlock(1).GetData());

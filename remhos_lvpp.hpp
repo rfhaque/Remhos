@@ -180,8 +180,9 @@ public:
    { }
    MPI_Comm GetComm() { return comm; }
    virtual void Apply(Vector &x, const Vector &lower, const Vector &upper,
-                      const real_t step_size, const Vector &search_l, const Vector &search_r,
-                      Vector &lambda) = 0;
+                      const real_t step_size,
+                      const Vector &search_l, const Vector &search_r,
+                      Vector &lambda, int max_iter) = 0;
 };
 
 
@@ -293,7 +294,7 @@ public:
 
    void Apply(Vector &x, const Vector &lower, const Vector &upper,
               const real_t step_size, const Vector &search_l, const Vector &search_r,
-              Vector &lambda) override
+              Vector &lambda, int max_iter) override
    {
       lambda.SetSize(1);
       real_t lambda_lower = search_l[0];
@@ -327,7 +328,7 @@ public:
       bool was_negative = false;
 
       // Regula Falsi method with Illinois update
-      while (lambda_upper - lambda_lower > 1e-08)
+      while (lambda_upper - lambda_lower > 1e-08 && iter < max_iter)
       {
          iter++;
          // convex combination of upper and lower bracket
@@ -399,9 +400,8 @@ public:
    BoxMirrorDescent(DifferentiableObjective &obj, Vector &primal,
                     const Vector &lower, const Vector &upper,
                     int max_iter = 1000, real_t tol = 1e-08)
-      : obj(obj), primal(primal), lower(lower), upper(upper), max_iter(max_iter),
-        tol(tol)
-   {}
+      : obj(obj), primal(primal), lower(lower), upper(upper),
+        max_iter(max_iter), tol(tol) { }
 
    void SetVerbose(int lv=1) { verbose = lv; }
 
@@ -446,7 +446,7 @@ public:
          Vector search_l(1), search_r(1);
          search_l[0] = -1e6;
          search_r[0] = 1e6;
-         projector->Apply(x, lower, upper, 1.0, search_l, search_r, lambda);
+         projector->Apply(x, lower, upper, 1.0, search_l, search_r, lambda, max_iter);
       }
       int N = x.Size();
       MPI_Allreduce(MPI_IN_PLACE, &N, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -466,7 +466,7 @@ public:
                           projector->GetComm());
             MPI_Allreduce(MPI_IN_PLACE, search_r.GetData(), 1, MFEM_MPI_REAL_T, MPI_MAX,
                           projector->GetComm());
-            projector->Apply(x, lower, upper, step_size, search_l, search_r, lambda);
+            projector->Apply(x, lower, upper, step_size, search_l, search_r, lambda, max_iter);
          }
          UpdatePrimal(x);
          real_t val = obj.Eval(primal);

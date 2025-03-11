@@ -176,7 +176,6 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
 #endif
       }
 
-      const int max_iter = 20;
       const double rtol = 1.e-7;
       const double atol = 1.e-7;
       Vector y_out(u_interpolated.Size());
@@ -202,14 +201,14 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    else if (opt_type == 2)
    {
       MDSolver md(pfes_tmp, mass_0, u_interpolated, u_final_min, u_final_max);
-      md.Optimize(1000, 1000, 1000);
+      md.Optimize(1000, 1000, max_iter);
       md.SetFinal(u_final);
    }
    else if (opt_type == 3)
    {
       GridFunctionCoefficient u_interpolated_cf(&u_interpolated);
       L2Obj obj(*u_final.ParFESpace(), u_interpolated_cf);
-      BoxMirrorDescent md(obj, u_final, u_final_min, u_final_max);
+      BoxMirrorDescent md(obj, u_final, u_final_min, u_final_max, max_iter);
       Vector target_volume(1); target_volume[0] = mass_0;
       ScalarLatentVolumeProjector projector(target_volume, pos_final,
                                             *u_final.ParFESpace(), u_final);
@@ -238,7 +237,8 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 1, MFEM_MPI_REAL_T, MPI_MAX,
                     pmesh_init.GetComm());
       projector.SetVerbose(2);
-      projector.Apply(psi, u_final_min, u_final_max, 1.0, search_l, search_r, lambda);
+      projector.Apply(psi, u_final_min, u_final_max, 1.0, search_l, search_r,
+                      lambda, max_iter);
    }
 
    // Report masses.
@@ -338,7 +338,6 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
 #endif
       }
 
-      const int max_iter = 100;
       const double rtol = 1.e-6;
       const double atol = 1.e-6;
       Vector y_out(u_desing.Size());
@@ -367,7 +366,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       QuadratureFunction u_target(u);
       QDSolver qd(qspace_tmp, mass_0, u_target, u_min, u_max);
 
-      qd.Optimize(1000, 1000, 1000);
+      qd.Optimize(1000, 1000, max_iter);
       qd.SetFinal(u);
    }
    else if (opt_type == 3)
@@ -375,7 +374,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       QuadratureFunction u_target(u);
       QuadratureFunctionCoefficient u_target_cf(u_target);
       L2Obj obj(*u.GetSpace(), u_target_cf);
-      BoxMirrorDescent md(obj, u, u_min, u_max);
+      BoxMirrorDescent md(obj, u, u_min, u_max, max_iter);
       Vector target_volume(1); target_volume[0] = mass_0;
       ScalarLatentVolumeProjector projector(
          target_volume, pos_final, *u.GetSpace(), u);
@@ -388,8 +387,8 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
    else if (opt_type == 4)
    {
       Vector target_volume(1); target_volume[0] = mass_0;
-      ScalarLatentVolumeProjector projector(target_volume, pos_final, *u.GetSpace(),
-                                            u);
+      ScalarLatentVolumeProjector projector(target_volume, pos_final,
+                                            *u.GetSpace(), u);
       QuadratureFunction psi(u);
       Vector search_l({infinity()}), search_r({-infinity()}), lambda(1);
       for (int i=0; i<psi.Size(); i++)
@@ -403,7 +402,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
       MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 1, MFEM_MPI_REAL_T, MPI_MAX,
                     pmesh_init.GetComm());
       projector.SetVerbose(2);
-      projector.Apply(psi, u_min, u_max, 1.0, search_l, search_r, lambda);
+      projector.Apply(psi, u_min, u_max, 1.0, search_l, search_r, lambda, max_iter);
    }
 
    // Report final masses.
@@ -509,7 +508,6 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
 #endif
       }
 
-      const int max_iter = 100;
       const double rtol = 1.e-7;
       const double atol = 1.e-7;
       Vector y_out(u.Size());
@@ -536,7 +534,7 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
       ParGridFunction u_interpolated(u);
       MDSolver md(pfes_tmp, mass, u_interpolated, u_final_min, u_final_max);
 
-      md.Optimize(100, 1000, 1000);
+      md.Optimize(100, 1000, max_iter);
       md.SetFinal(u);
    }
 

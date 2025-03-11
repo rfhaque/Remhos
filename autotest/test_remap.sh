@@ -7,12 +7,14 @@ file="autotest/out_remap.dat"
 
 ntask=$1
 
-command="mpirun -np "$((ntask))" ./remhos -no-vis -dt -1.0"
+command="mpirun -np "$((ntask))" ./remhos -no-vis -dt -1.0 -mi 20"
 
 methods=( "-opt 0"      # no optimization
           "-opt 1"      # HiOp
           "-opt 1 -h1s" # HiOp with h1-seminorm
-          "-opt 2")     # LVPP
+          "-opt 2"      # LVPP
+          "-opt 3"      # LVPP Box Mirror Descent
+          "-opt 4")     # LVPP Bregman Projection
 
 cd ..
 make
