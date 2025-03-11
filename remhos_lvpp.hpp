@@ -386,6 +386,7 @@ private:
    Vector ind_vec;
    Vector rho_vec;
    Vector E_vec;
+   Array<int> offsets;
    const Vector &pos;
    std::unique_ptr<QuadratureFunction> ind_qf;
    std::unique_ptr<QuadratureFunction> rho_qf;
@@ -402,13 +403,19 @@ public:
       : LatentVolumeProjector(targetVolume, qspace), primal(primal),
         pos(pos)
    {
+      offsets.SetSize(4);
+      offsets[0] = 0;
+      offsets[1] = qspace.GetSize();
+      offsets[2] = qspace.GetSize();
+      offsets[3] = fes.GetVSize();
+      offsets.PartialSum();
       int qsize = qspace.GetSize();
-      ind_qf.reset(new QuadratureFunction(this->qspace, primal.GetData()));
-      rho_qf.reset(new QuadratureFunction(this->qspace, primal.GetData() + qsize));
-      E_gf.reset(new ParGridFunction(&fes, primal.GetData() + 2*qsize));
-      ind_vec.SetDataAndSize(primal.GetData(), qsize);
-      rho_vec.SetDataAndSize(primal.GetData() + qsize, qsize);
-      E_vec.SetDataAndSize(primal.GetData() + 2*qsize, primal.Size() - 2*qsize);
+      ind_qf.reset(new QuadratureFunction(this->qspace, primal.GetData() + offsets[0]));
+      rho_qf.reset(new QuadratureFunction(this->qspace, primal.GetData() + offsets[1]));
+      E_gf.reset(new ParGridFunction(&fes, primal.GetData() + offsets[2]));
+      ind_vec.SetDataAndSize(primal.GetData() + offsets[0], offsets[1] - offsets[0]);
+      rho_vec.SetDataAndSize(primal.GetData() + offsets[1], offsets[2] - offsets[1]);
+      E_vec.SetDataAndSize(primal.GetData() + offsets[2], offsets[3] - offsets[2]);
    }
 
    real_t calculateIndMass(const QuadratureFunction &ind)
@@ -543,60 +550,36 @@ public:
    }
 
    real_t calculateShiftedMass(const int i, const real_t shift,
-                               const Vector &ind_latent,
-                               const Vector &rho_latent, const Vector &E_latent,
-                               const Vector &ind_lower, const Vector &ind_upper,
-                               const Vector &rho_lower, const Vector &rho_upper,
-                               const Vector &E_lower, const Vector &E_upper)
+                               const Vector &latent,
+                               const Vector &lower, const Vector &upper)
    {
       if (i == 0)
       {
-         return calculateShiftedIndMass(shift, ind_latent, ind_lower, ind_upper);
+         return calculateShiftedIndMass(shift, latent, lower, upper);
       }
       else if (i == 1)
       {
-         return calculateShiftedRhoMass(shift, rho_latent, rho_lower, rho_upper);
+         return calculateShiftedRhoMass(shift, latent, lower, upper);
       }
       else
       {
-         return calculateShiftedEMass(shift, E_latent, E_lower, E_upper);
+         return calculateShiftedEMass(shift, latent, lower, upper);
       }
    }
 
-   void Apply(Vector &x_all, const Vector &lower, const Vector &upper,
+   void Apply(Vector &x_all, const Vector &lower_all, const Vector &upper_all,
               const real_t step_size, const Vector &search_l, const Vector &search_r,
               Vector &lambda, int max_iter) override
    {
       lambda.SetSize(3);
       int qsize = this->qspace->GetSize();
 
-      const Vector ind_lower(lower.GetData(), qsize);
-      const Vector ind_upper(upper.GetData(), qsize);
-
-      const Vector rho_lower(lower.GetData() + qsize, qsize);
-      const Vector rho_upper(upper.GetData() + qsize, qsize);
-
-      const Vector E_lower(lower.GetData() + 2*qsize, x_all.Size() - 2*qsize);
-      const Vector E_upper(upper.GetData() + 2*qsize, x_all.Size() - 2*qsize);
-
-      Vector x_ind(x_all.GetData(), qsize);
-      Vector x_rho(x_all.GetData() + qsize, qsize);
-      Vector x_E(x_all.GetData() + 2*qsize, x_all.Size() - 2*qsize);
-      Vector x;
-      for (int i=0; i<3; i++)
+      Vector x, lower, upper;
+      for (int i=0; i<offsets.Size()-1; i++)
       {
-         if (i==0)
-         {
-            x.SetDataAndSize(x_all.GetData(), qsize);
-         }
-         else if (i==1)
-         {
-            x.SetDataAndSize(x_all.GetData() + qsize, qsize);
-         }
-         else
-         {
-            x.SetDataAndSize(x_all.GetData() + 2*qsize, x_all.Size() - 2*qsize);
-         }
+         x.SetDataAndSize(x_all.GetData() + offsets[i], offsets[i+1] - offsets[i]);
+         lower.SetDataAndSize(lower_all.GetData() + offsets[i], offsets[i+1] - offsets[i]);
+         upper.SetDataAndSize(upper_all.GetData() + offsets[i], offsets[i+1] - offsets[i]);
          real_t lambda_lower = search_l[i];
          real_t lambda_upper = search_r[i];
 
@@ -607,10 +590,7 @@ public:
          for (; trial < max_trial; trial++)
          {
             mid = lambda_lower;
-            vol_lower = calculateShiftedMass(i, mid, x_ind, x_rho, x_E,
-                                             ind_lower, ind_upper,
-                                             rho_lower, rho_upper,
-                                             E_lower, E_upper);
+            vol_lower = calculateShiftedMass(i, mid, x, lower, upper);
             if (vol_lower > targetVolume[i])
             {
                if (Mpi::Root())
@@ -635,10 +615,7 @@ public:
          for (; trial < max_trial; trial++)
          {
             mid = lambda_upper;
-            vol_upper = calculateShiftedMass(i, mid, x_ind, x_rho, x_E,
-                                             ind_lower, ind_upper,
-                                             rho_lower, rho_upper,
-                                             E_lower, E_upper);
+            vol_upper = calculateShiftedMass(i, mid, x, lower, upper);
             if (vol_upper < targetVolume[i])
             {
                if (Mpi::Root())
@@ -680,10 +657,7 @@ public:
                    << " ( interval: " << lambda_upper - lambda_lower << " )"
                    << ": vol-diff = " << std::flush;
             }
-            vol = calculateShiftedMass(i, mid, x_ind, x_rho, x_E,
-                                       ind_lower, ind_upper,
-                                       rho_lower, rho_upper,
-                                       E_lower, E_upper);
+            vol = calculateShiftedMass(i, mid, x, lower, upper);
             if (verbose > 1 && Mpi::Root())
             {
                out << vol - targetVolume[i] << std::endl;
