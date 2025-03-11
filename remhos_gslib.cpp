@@ -718,16 +718,15 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
       ind_rho_e = y_out;
 
       delete optsolver;
-
    }
    else if (opt_type == 4)
    {
-
       Vector target_volume(3);
       target_volume[0] = volume_0;
       target_volume[1] = mass_0;
       target_volume[2] = energy_0;
-      IndRhoEVolumeProjector projector(target_volume, pos_final, *qspace, *pfes_e, ind_rho_e);
+      IndRhoEVolumeProjector projector(target_volume, pos_final,
+                                       *qspace, *pfes_e, ind_rho_e);
       Vector psi(ind_rho_e);
       Vector search_l(3), search_r(3), lambda(3);
       search_l = infinity(); search_r = -infinity();
@@ -759,31 +758,27 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
       projector.SetVerbose(2);
       projector.Apply(psi, x_min, x_max, 1.0, search_l, search_r, lambda, max_iter);
    }
-   const double volume_f_opt = Integrate(pos_final, &ind,
-                                         nullptr, nullptr);
-   const double mass_f_opt   = Integrate(pos_final, &ind, &rho,
-                                         nullptr);
-   const double energy_f_opt = Integrate(pos_final, &ind, &rho,
-                                         &e);
 
-
+   const double volume_f_opt = Integrate(pos_final, &ind, nullptr, nullptr);
+   const double mass_f_opt   = Integrate(pos_final, &ind, &rho,    nullptr);
+   const double energy_f_opt = Integrate(pos_final, &ind, &rho,    &e);
    if (Mpi::Root())
    {
-      std::cout << "Volume initial:             " << volume_0 << std::endl
+      std::cout << "Volume initial:          " << volume_0 << std::endl
                 << "Volume optimized:        " << volume_f_opt << std::endl
                 << "Volume optimized diff:   "
                 << (volume_f_opt - volume_0) << endl
                 << "Volume optimized diff %: "
                 << (volume_f_opt - volume_0) / volume_0 * 100
                 << endl << "*\n"
-                << "Mass initial:               " << mass_0 << std::endl
+                << "Mass initial:            " << mass_0 << std::endl
                 << "Mass optimized:          " << mass_f_opt << std::endl
                 << "Mass optimized diff:     "
                 << (mass_f_opt - mass_0) << endl
                 << "Mass optimized diff %: "
                 << (mass_f_opt - mass_0) / mass_0 * 100
                 << endl << "*\n"
-                << "Energy initial:             " << energy_0 << std::endl
+                << "Energy initial:          " << energy_0 << std::endl
                 << "Energy optimized:        " << energy_f_opt << std::endl
                 << "Energy optimized diff:   "
                 << (energy_f_opt- energy_0) << endl
@@ -791,9 +786,6 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
                 << (energy_f_opt- energy_0) / energy_0 * 100
                 << endl;
    }
-
-   // Optimize ire_final here.
-   // ...
 }
 
 void InterpolationRemap::GetDOFPositions(const ParFiniteElementSpace &pfes,
