@@ -1059,6 +1059,24 @@ int main(int argc, char *argv[])
          socketstream sock;
          VisualizeField(sock, "localhost", 19916, e_0, "e_0 GF",
                         800, 500, 400, 400);
+
+         ParaViewDataCollection pvdc("IndRhoE_before_opt", &pmesh);
+         pvdc.SetDataFormat(VTKFormat::BINARY32);
+         pvdc.SetCycle(0);
+         pvdc.SetTime(1.0);
+         pvdc.RegisterQField("ind", &ind_0);
+         pvdc.RegisterQField("rho", &rho_0);
+        // pvdc.RegisterField("energy", &e_0);
+         pvdc.Save();
+
+                          ParaViewDataCollection pvdc1("IndRhoE_before_opt1", &pmesh);
+         pvdc1.SetDataFormat(VTKFormat::BINARY32);
+         pvdc1.SetCycle(0);
+         pvdc1.SetTime(1.0);
+         // pvdc.RegisterQField("ind", &ind);
+         // pvdc.RegisterQField("rho", &rho);
+         pvdc1.RegisterField("energy", &e_0);
+         pvdc1.Save();
       }
 
       // Remap.
@@ -1083,6 +1101,26 @@ int main(int argc, char *argv[])
          VisQuadratureFunction(pmesh, rho, "rho QF", 400, 500);
          socketstream sock_f;
          VisualizeField(sock_f, "localhost", 19916, e, "e GF", 800, 500, 400, 400);
+
+         ParaViewDataCollection pvdc("IndRhoE_after_opt", &pmesh);
+         pvdc.SetDataFormat(VTKFormat::BINARY32);
+         pvdc.SetCycle(0);
+         pvdc.SetTime(1.0);
+         pvdc.RegisterQField("ind", &ind);
+         pvdc.RegisterQField("rho", &rho);
+         //pvdc.RegisterField("energy", &e);
+         pvdc.Save();
+
+
+                  ParaViewDataCollection pvdc1("IndRhoE_after_opt1", &pmesh);
+         pvdc1.SetDataFormat(VTKFormat::BINARY32);
+         pvdc1.SetCycle(0);
+         pvdc1.SetTime(1.0);
+         // pvdc.RegisterQField("ind", &ind);
+         // pvdc.RegisterQField("rho", &rho);
+         pvdc1.RegisterField("energy", &e);
+         pvdc1.Save();
+         
       }
 
       return 0;
@@ -1194,7 +1232,10 @@ int main(int argc, char *argv[])
          VisQuadratureFunction(pmesh, rho, "rho QF", 400, 500);
          socketstream sock_f;
          VisualizeField(sock_f, "localhost", 19916, e, "e GF", 800, 500, 400, 400);
+               std::cout<<"visualization"<<std::endl;
       }
+
+
 
       return 0;
    }

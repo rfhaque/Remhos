@@ -659,8 +659,14 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    offset[2] = offset[1] + size_qf;
    offset[3] = offset[2] + size_gf;
 
+   BlockVector initial_desing(offset);
    BlockVector x_min(offset);
    BlockVector x_max(offset);
+
+   initial_desing.GetBlock(0) = ind;
+   initial_desing.GetBlock(1) = rho;
+   initial_desing.GetBlock(2) = e;
+
 
    x_min.GetBlock(0) = ind_min;
    x_min.GetBlock(1) = rho_min;
@@ -687,16 +693,19 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
 #endif
       }
 
-      const int max_iter = 200;
-      const double rtol = 5.e-2;
-      const double atol = 5.e-2;
+      const int max_iter = 500;
+      const double rtol = 1.e-7;
+      const double atol = 1.e-7;
       Vector y_out(ind_rho_e.Size());
+
+      y_out = initial_desing;
+      ind_rho_e= initial_desing;
 
       const int numContraints = 3;
       RemhosIndRhoEHiOpProblem ot_prob(*qspace,
                                        *pfes_e,
                                        pos_final,
-                                       ind_rho_e_0,
+                                       initial_desing,
                                        ind_rho_e,
                                        x_min,
                                        x_max,
@@ -705,7 +714,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
                                        energy_0,
                                        numContraints,
                                        false,
-                                       false);
+                                       true);
 
       optsolver->SetOptimizationProblem(ot_prob);
 

@@ -250,6 +250,8 @@ virtual double CalcObjective(const Vector &x) const
       QuadratureFunction x_diff(&qspace); x_diff = 0.0;
       subtract( x, x_initial, x_diff);
 
+      real_t normSq = 0.0;
+
       if(isL2_)
       {
          auto mesh = qspace.GetMesh();
@@ -280,20 +282,21 @@ virtual double CalcObjective(const Vector &x) const
             {
                const IntegrationPoint &ip = ir.IntPoint(q);
                Tr.SetIntPoint(&ip);
+               real_t w = Tr.Weight() * ip.weight;
 
-               x_diff[s_offset+q] = Tr.Weight() * ip.weight * x_diff[s_offset+q];
+               normSq += 0.5* w *x_diff[s_offset+q] * x_diff[s_offset+q];
             }
          }
       }
+      else{
+         normSq = 0.5*x_diff.Norml2() * x_diff.Norml2();
 
-      real_t norm = x_diff.Norml2();
-
-      real_t normSq = norm * norm;
+      }
 
       MPI_Allreduce(MPI_IN_PLACE, &normSq, 1, MPI_DOUBLE, MPI_SUM,
                   MPI_COMM_WORLD);
 
-      return 0.5 * normSq;
+      return normSq;
    }
 
    virtual void CalcObjectiveGrad(const Vector &x, Vector &grad) const
@@ -331,8 +334,9 @@ virtual double CalcObjective(const Vector &x) const
             {
                const IntegrationPoint &ip = ir.IntPoint(q);
                Tr.SetIntPoint(&ip);
+               real_t w = Tr.Weight() * ip.weight;
 
-               x_diff[s_offset+q] = Tr.Weight() * ip.weight * x_diff[s_offset+q];
+               x_diff[s_offset+q] = w * x_diff[s_offset+q];
             }
          }
       }
@@ -463,6 +467,10 @@ private:
 
    Array<int> offset;
 
+   real_t w_1 = 1e4;
+   real_t w_2 = 1e4;
+   real_t w_3 = 1e1;
+
 class EnergyGradIntegrator : public mfem::LinearFormIntegrator {
 public:
   EnergyGradIntegrator(const mfem::QuadratureFunction &ind, const mfem::QuadratureFunction &rho);
@@ -536,21 +544,56 @@ virtual double CalcObjective(const Vector &x) const
 
       //-------------------------------------------------------------------
 
-      real_t normind = ind_diff.Norml2();
-      real_t normindSq = normind * normind;
+      real_t normindSq = 0.0;
+      real_t normrohSq = 0.0;
+      
+      if(isL2_)
+      {
+         auto mesh = qspace_.GetMesh();
+         const int NE = mesh->GetNE();
+
+         Array<int> offset(NE+1);
+         offset[0] = 0;
+
+         for (int e = 0; e < NE; e++)
+         {
+            const IntegrationRule &ir = qspace_.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
+
+            offset[e+1] = offset[e] + nqp;
+         }
+
+         for (int e = 0; e < NE; e++)
+         {
+            const int s_offset = offset[e];
+
+            IsoparametricTransformation Tr;
+            mesh->GetElementTransformation(e, pos_final, &Tr);
+
+            const IntegrationRule &ir = qspace_.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
+
+            for (int q = 0; q < nqp; q++)
+            {
+               const IntegrationPoint &ip = ir.IntPoint(q);
+               Tr.SetIntPoint(&ip);
+               real_t w = Tr.Weight() * ip.weight;
+
+               normindSq += 0.5* w *ind_diff[s_offset+q] * ind_diff[s_offset+q];
+               normrohSq += 0.5* w *roh_diff[s_offset+q] * roh_diff[s_offset+q];
+            }
+         }
+      }
+      else{
+         normindSq = 0.5 * ind_diff.Norml2() * ind_diff.Norml2();
+         normrohSq = 0.5 * roh_diff.Norml2() * roh_diff.Norml2();
+      }
 
       MPI_Allreduce(MPI_IN_PLACE, &normindSq, 1, MPI_DOUBLE, MPI_SUM,
                   MPI_COMM_WORLD);
-      normindSq = 0.5 * normindSq;
-
-      //-------------------------------------------------------------------
-
-      real_t normroh = roh_diff.Norml2();
-      real_t normrohSq = normroh * normroh;
 
       MPI_Allreduce(MPI_IN_PLACE, &normrohSq, 1, MPI_DOUBLE, MPI_SUM,
                   MPI_COMM_WORLD);
-      normrohSq = 0.5 * normrohSq;
 
       //-------------------------------------------------------------------
 
@@ -569,9 +612,9 @@ virtual double CalcObjective(const Vector &x) const
 
       real_t val = dQdeta(oneGridFunction);
 
-      return normindSq + normrohSq + val;
+      //std::cout<<"ind: "<< normindSq<<" | rho: "<< normrohSq<<"| energy: "<<val <<std::endl;
 
-      //return 0.5 * normSq;
+      return w_1*normindSq + w_2*normrohSq +w_3* val;
    }
 
    virtual void CalcObjectiveGrad(const Vector &x, Vector &grad) const
@@ -598,80 +641,43 @@ virtual double CalcObjective(const Vector &x) const
 
       if(isL2_)
       {
-         // auto mesh = qspace.GetMesh();
-         // const int NE = mesh->GetNE();
+         auto mesh = qspace_.GetMesh();
+         const int NE = mesh->GetNE();
 
-         // Array<int> offset(NE+1);
-         // offset[0] = 0;
+         Array<int> offset(NE+1);
+         offset[0] = 0;
 
-         // for (int e = 0; e < NE; e++)
-         // {            
-         //    const IntegrationRule &ir = qspace.GetElementIntRule(e);
-         //    const int nqp = ir.GetNPoints();
+         for (int e = 0; e < NE; e++)
+         {
+            const IntegrationRule &ir = qspace_.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
 
-         //    offset[e+1] = offset[e] + nqp;
-         // }
+            offset[e+1] = offset[e] + nqp;
+         }
 
-         // for (int e = 0; e < NE; e++)
-         // {
-         //    const int s_offset = offset[e];
+         for (int e = 0; e < NE; e++)
+         {
+            const int s_offset = offset[e];
 
-         //    IsoparametricTransformation Tr;
-         //    mesh->GetElementTransformation(e, pos_final, &Tr);
+            IsoparametricTransformation Tr;
+            mesh->GetElementTransformation(e, pos_final, &Tr);
 
-         //    const IntegrationRule &ir = qspace.GetElementIntRule(e);
-         //    const int nqp = ir.GetNPoints();
+            const IntegrationRule &ir = qspace_.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
 
-         //    for (int q = 0; q < nqp; q++)
-         //    {
-         //       const IntegrationPoint &ip = ir.IntPoint(q);
-         //       Tr.SetIntPoint(&ip);
+            for (int q = 0; q < nqp; q++)
+            {
+               const IntegrationPoint &ip = ir.IntPoint(q);
+               Tr.SetIntPoint(&ip);
+               real_t w = Tr.Weight() * ip.weight;
 
-         //       x_diff[s_offset+q] = Tr.Weight() * ip.weight * x_diff[s_offset+q];
-         //    }
-         // }
+               ind_diff[s_offset+q] *= w;
+               roh_diff[s_offset+q] *= w;
+            }
+         }
       }
 
       //------------------------------------------------------------------------
-
-      if(isL2_)
-      {
-         // auto mesh = qspace.GetMesh();
-         // const int NE = mesh->GetNE();
-
-         // Array<int> offset(NE+1);
-         // offset[0] = 0;
-
-         // for (int e = 0; e < NE; e++)
-         // {            
-         //    const IntegrationRule &ir = qspace.GetElementIntRule(e);
-         //    const int nqp = ir.GetNPoints();
-
-         //    offset[e+1] = offset[e] + nqp;
-         // }
-
-         // for (int e = 0; e < NE; e++)
-         // {
-         //    const int s_offset = offset[e];
-
-         //    IsoparametricTransformation Tr;
-         //    mesh->GetElementTransformation(e, pos_final, &Tr);
-
-         //    const IntegrationRule &ir = qspace.GetElementIntRule(e);
-         //    const int nqp = ir.GetNPoints();
-
-         //    for (int q = 0; q < nqp; q++)
-         //    {
-         //       const IntegrationPoint &ip = ir.IntPoint(q);
-         //       Tr.SetIntPoint(&ip);
-
-         //       x_diff[s_offset+q] = Tr.Weight() * ip.weight * x_diff[s_offset+q];
-         //    }
-         // }
-      }
-
-      //------------------------------------------------------------------------
-
 
       ParLinearForm dQdeta(&fespace_);
       ParGridFunction    e_grad(&fespace_);
@@ -682,6 +688,10 @@ virtual double CalcObjective(const Vector &x) const
       dQdeta.AddDomainIntegrator(lfi_1);
       dQdeta.Assemble();
       dQdeta.ParallelAssemble(e_grad);
+
+      ind_diff *= w_1;
+      roh_diff *= w_2;
+      e_grad   *= w_3;
 
 
       ind_rho_e_grad.GetBlock(0) = ind_diff;
