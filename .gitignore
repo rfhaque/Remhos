@@ -1,3 +1,4 @@
 bounds/
 initial_mesh/
-remap_after_opt/
+*_after_opt*/
+*_before_opt*/
