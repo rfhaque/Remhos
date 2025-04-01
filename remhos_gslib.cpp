@@ -692,7 +692,6 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
 #endif
       }
 
-      const int max_iter = 500;
       const double rtol = 1.e-7;
       const double atol = 1.e-7;
       Vector y_out(ind_rho_e.Size());
@@ -765,7 +764,8 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
       MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 3, MFEM_MPI_REAL_T, MPI_MAX,
                     pmesh_init.GetComm());
       projector.SetVerbose(2);
-      projector.Apply(psi, x_min, x_max, 1.0, search_l, search_r, lambda, max_iter);
+      projector.Apply(psi, x_min, x_max, 1.0,
+                      search_l, search_r, lambda, max_iter);
    }
 
    const double volume_f_opt = Integrate(pos_final, &ind, nullptr, nullptr);

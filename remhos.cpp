@@ -279,9 +279,7 @@ int main(int argc, char *argv[])
    if (myid == 0) { device.Print(); }
 
    // When not using lua, exec mode is derived from problem number convention
-   if (problem_num < 10)      { exec_mode = 0; }
-   else if (problem_num < 20) { exec_mode = 1; }
-   else { MFEM_ABORT("Unspecified execution mode."); }
+   exec_mode = (problem_num < 10) ? 0 : 1;
 
    // Read the serial mesh from the given mesh file on all processors.
    // Refine the mesh in serial to increase the resolution.
@@ -2064,14 +2062,26 @@ double u0_total_mass()
 
 double s0_function(const Vector &x)
 {
-   // Simple nonlinear function.
-   return 2.0 + sin(2*M_PI * x(0)) * sin(2*M_PI * x(1));
+   switch (problem_num)
+   {
+      // Simple nonlinear function.
+      case 14: return 2.0 + sin(2*M_PI * x(0)) * sin(2*M_PI * x(1));
+      // Constant.
+      case 34: return 7.0;
+      default: MFEM_ABORT("s0 is not defined for this problem.");
+   }
 }
 
 double q0_function(const Vector &x)
 {
-   // Simple nonlinear function.
-   return 2.0 + cos(2*M_PI * x(0)) * cos(2*M_PI * x(1));
+   switch (problem_num)
+   {
+      // Simple nonlinear function.
+      case 14: return 2.0 + cos(2*M_PI * x(0)) * cos(2*M_PI * x(1));
+      // Constant.
+      case 34: return 10.0;
+      default: MFEM_ABORT("s0 is not defined for this problem.");
+   }
 }
 
 double inflow_function(const Vector &x)
