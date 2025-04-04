@@ -50,12 +50,18 @@ for method in "${methods[@]}"; do
   echo -e $run_line >> $file
   $run_line | grep -e 'Mass initial' -e 'Mass interpolated diff:' -e 'Mass optimized diff:' >> $file
 
-  echo -e '\n'"- 2D ind_rho_e" >> $file
-  run_line=$command" -m ./data/inline-quad.mesh -p 14 -rs 4 -tf 0.75 -mono 5 "$method
-  echo -e $run_line >> $file
-  $run_line | grep -e 'Volume interpolated diff:' -e 'Mass interpolated diff:' -e 'Energy interpolated diff:'>> $file
-
 done
+
+echo -e '\n'"- 2D ind_rho_e (smooth rho-e LVPP)" >> $file
+run_line=$command" -m ./data/inline-quad.mesh -p 14 -rs 4 -tf 0.75 -mono 5 -opt 4"
+echo -e $run_line >> $file
+$run_line | grep -e 'Volume interpolated diff:' -e 'Mass interpolated diff:' -e 'Energy interpolated diff:'>> $file
+
+echo -e '\n'"- 2D ind_rho_e (constant rho-e HiOp)" >> $file
+run_line=$command" -m ./data/inline-quad.mesh -p 34 -rs 4 -tf 0.75 -mono 5 -opt 1"
+echo -e $run_line >> $file
+$run_line | grep -e 'Volume interpolated diff:' -e 'Mass interpolated diff:' -e 'Energy interpolated diff:'>> $file
+
 
 cd autotest
 

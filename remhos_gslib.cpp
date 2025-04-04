@@ -666,7 +666,6 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    initial_desing.GetBlock(1) = rho;
    initial_desing.GetBlock(2) = e;
 
-
    x_min.GetBlock(0) = ind_min;
    x_min.GetBlock(1) = rho_min;
    x_min.GetBlock(2) = e_min;
@@ -692,37 +691,26 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
 #endif
       }
 
-      const double rtol = 1.e-7;
-      const double atol = 1.e-7;
       Vector y_out(ind_rho_e.Size());
-
       y_out = initial_desing;
-      ind_rho_e= initial_desing;
+      ind_rho_e = initial_desing;
 
-      const int numContraints = 3;
-      RemhosIndRhoEHiOpProblem ot_prob(*qspace,
-                                       *pfes_e,
+      RemhosIndRhoEHiOpProblem ot_prob(*qspace, *pfes_e,
                                        pos_final,
                                        initial_desing,
                                        ind_rho_e,
-                                       x_min,
-                                       x_max,
-                                       volume_0,
-                                       mass_0,
-                                       energy_0,
-                                       numContraints,
-                                       false,
-                                       true);
+                                       x_min, x_max,
+                                       volume_0, mass_0, energy_0,
+                                       3, false, true);
 
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);
-      optsolver->SetAbsTol(atol);
-      optsolver->SetRelTol(rtol);
+      optsolver->SetAbsTol(1e-7);
+      optsolver->SetRelTol(1e-7);
       optsolver->SetPrintLevel(3);
       optsolver->Mult(ind_rho_e, y_out);
 
-      // // fix parallel. u_interpolated and y_out should be true vectors
       ind_rho_e = y_out;
 
       delete optsolver;
@@ -767,13 +755,15 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
       projector.Apply(psi, x_min, x_max, 1.0,
                       search_l, search_r, lambda, max_iter);
    }
+   else { MFEM_ABORT("not implemented!"); }
 
    const double volume_f_opt = Integrate(pos_final, &ind, nullptr, nullptr);
    const double mass_f_opt   = Integrate(pos_final, &ind, &rho,    nullptr);
    const double energy_f_opt = Integrate(pos_final, &ind, &rho,    &e);
    if (Mpi::Root())
    {
-      std::cout << "Volume initial:          " << volume_0 << std::endl
+      std::cout << "-------\n"
+                << "Volume initial:          " << volume_0 << std::endl
                 << "Volume optimized:        " << volume_f_opt << std::endl
                 << "Volume optimized diff:   "
                 << (volume_f_opt - volume_0) << endl
@@ -784,7 +774,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
                 << "Mass optimized:          " << mass_f_opt << std::endl
                 << "Mass optimized diff:     "
                 << (mass_f_opt - mass_0) << endl
-                << "Mass optimized diff %: "
+                << "Mass optimized diff %:   "
                 << (mass_f_opt - mass_0) / mass_0 * 100
                 << endl << "*\n"
                 << "Energy initial:          " << energy_0 << std::endl
