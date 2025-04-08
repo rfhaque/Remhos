@@ -1090,7 +1090,7 @@ int main(int argc, char *argv[])
       interpolator.max_iter      = max_opt_iter;
       interpolator.SetQuadratureSpace(qspace);
       interpolator.SetEnergyFESpace(pfes);
-      interpolator.RemapIndRhoE(ind_rho_e_0, x_final,
+      interpolator.RemapIndRhoE(ind_rho_e_0, ind_0_bool_el, x_final,
                                 ind_rho_e, optimization_type);
 
       QuadratureFunction ind(&qspace, ind_rho_e.GetBlock(0).GetData()),

@@ -550,7 +550,8 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    }
 }
 
-void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
+void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
+                                      Array<bool> &active_el_0,
                                       const ParGridFunction &pos_final,
                                       Vector &ind_rho_e, int opt_type)
 {
@@ -650,7 +651,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    Vector rho_min, rho_max;
    CalcQuadBounds(rho_0, pos_final, rho_min, rho_max);
    Vector e_min, e_max;
-   CalcDOFBounds(e_0, *pfes_e, pos_final, e_min, e_max, true);
+   CalcDOFBounds(e_0, *pfes_e, pos_final, e_min, e_max, true, &active_el_0);
 
    Array<int> offset(4);
    offset[0] = 0;
@@ -924,26 +925,42 @@ double InterpolationRemap::Integrate(const Vector &pos,
    return integral;
 }
 
+#define EMPTY_VALUE -1.0
+
 void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
                                        const ParFiniteElementSpace &pfes,
                                        const Vector &pos_final,
                                        Vector &g_min, Vector &g_max,
-                                       bool use_nbr)
+                                       bool use_el_nbr, Array<bool> *active_el)
 {
+   if (active_el)
+   {
+      MFEM_VERIFY(use_el_nbr == true,
+                  "Bounds around inactive elements require use_el_nbr = true.");
+   }
+
    const int size_res = pfes.GetVSize(), NE = pmesh_init.GetNE();
    g_min.SetSize(size_res);
    g_max.SetSize(size_res);
 
    // Form the min and max functions on every MPI task.
+   // All on the initial mesh.
    L2_FECollection fec_L2(0, pmesh_init.Dimension());
    ParFiniteElementSpace pfes_L2(&pmesh_init, &fec_L2);
    ParGridFunction g_el_min(&pfes_L2), g_el_max(&pfes_L2);
    for (int e = 0; e < NE; e++)
    {
-      Vector g_vals;
-      g_init.GetElementDofValues(e, g_vals);
-      g_el_min(e) = g_vals.Min();
-      g_el_max(e) = g_vals.Max();
+      if (active_el && (*active_el)[e] == false)
+      {
+         g_el_min(e) = EMPTY_VALUE;
+         g_el_max(e) = EMPTY_VALUE;
+         continue;
+      }
+
+      Vector g_init_vals;
+      g_init.GetElementDofValues(e, g_init_vals);
+      g_el_min(e) = g_init_vals.Min();
+      g_el_max(e) = g_init_vals.Max();
    }
 
    Vector pos_nodes_final;
@@ -955,7 +972,8 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
    finder.Interpolate(pos_nodes_final, g_el_max, g_max);
    finder.FreeData();
 
-   if (use_nbr)
+   // On the new mesh, take min/max over DOFs in the same element.
+   if (use_el_nbr)
    {
       for (int e = 0; e < NE; e++)
       {
@@ -963,16 +981,29 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
          pfes.GetElementDofs(e, dofs);
          const int s = dofs.Size();
 
-         Vector g_vals;
-         g_min.GetSubVector(dofs, g_vals);
-         const double minv = g_vals.Min();
-         g_max.GetSubVector(dofs, g_vals);
-         const double maxv = g_vals.Max();
+         Vector g_min_el, g_max_el;
+         g_min.GetSubVector(dofs, g_min_el);
+         g_max.GetSubVector(dofs, g_max_el);
+         double min_el =   std::numeric_limits<double>::infinity(),
+                max_el = - std::numeric_limits<double>::infinity();
+         bool has_value = false;
+         for (int i = 0; i < s; i++)
+         {
+            if (g_min_el(i) != EMPTY_VALUE)
+            {
+               has_value = true;
+               min_el = std::min(min_el, g_min_el(i));
+               max_el = std::max(max_el, g_max_el(i));
+            }
+         }
+
+         // The element is completely empty -> we want to get zeros in it.
+         if (has_value == false) { min_el = max_el = 0.0; }
 
          for (int i = 0; i < s; i++)
          {
-            g_min(s * e + i) = minv;
-            g_max(s * e + i) = maxv;
+            g_min(s * e + i) = min_el;
+            g_max(s * e + i) = max_el;
          }
       }
    }
@@ -1008,26 +1039,45 @@ void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
    finder.Interpolate(pos_quads_final, g_el_max, g_max);
    finder.FreeData();
 
-   // int el_e_idx = 0;
-   // for (int e = 0; e < NE; e++)
+   // Note that for QuadratureFunctions, we don't take the min/max over the
+   // values in the same element (commented below).
+   // In particular, for quadratures points found in empty zones, the
+   // min and max values will stay at zero, so the point will stay empty. This
+   // also guarantees preservation of (locally) constant QuadratureFunctions.
+
+   // On the new mesh, take min/max over quads in the same element.
+   // if (use_el_nbr)
    // {
-   //    const IntegrationRule &ir = qspace->GetElementIntRule(e);
-   //    const int nqp = ir.GetNPoints();
-
-   //    double minv = g_min(el_e_idx), maxv = g_max(el_e_idx);
-   //    for (int q = 1; q < nqp; q++)
+   //    int el_e_idx = 0;
+   //    for (int e = 0; e < NE; e++)
    //    {
-   //       minv = fmin(minv, g_min(el_e_idx + q));
-   //       maxv = fmax(maxv, g_max(el_e_idx + q));
-   //    }
+   //       const IntegrationRule &ir = qspace->GetElementIntRule(e);
+   //       const int nqp = ir.GetNPoints();
 
-   //    for (int q = 0; q < nqp; q++)
-   //    {
-   //       g_min(el_e_idx + q) = minv;
-   //       g_max(el_e_idx + q) = maxv;
-   //    }
+   //       double min_el =   std::numeric_limits<double>::infinity(),
+   //              max_el = - std::numeric_limits<double>::infinity();
+   //       bool has_value = false;
+   //       for (int q = 0; q < nqp; q++)
+   //       {
+   //          if (g_min(el_e_idx + q) != EMPTY_VALUE)
+   //          {
+   //             has_value = true;
+   //             min_el = std::min(min_el, g_min(el_e_idx + q));
+   //             max_el = std::max(max_el, g_max(el_e_idx + q));
+   //          }
+   //       }
 
-   //    el_e_idx += nqp;
+   //       // The element is completely empty -> we want to get zeros in it.
+   //       if (has_value == false) { min_el = max_el = 0.0; }
+
+   //       for (int q = 0; q < nqp; q++)
+   //       {
+   //          g_min(el_e_idx + q) = min_el;
+   //          g_max(el_e_idx + q) = max_el;
+   //       }
+
+   //       el_e_idx += nqp;
+   //    }
    // }
 }
 

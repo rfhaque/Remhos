@@ -67,7 +67,8 @@ private:
    void CalcDOFBounds(const ParGridFunction &g_init,
                       const ParFiniteElementSpace &pfes,
                       const Vector &pos_final,
-                      Vector &g_min, Vector &g_max, bool use_nbr);
+                      Vector &g_min, Vector &g_max, bool use_el_nbr,
+                      Array<bool> *active_el = nullptr);
    // Computes bounds for quadrature values, at the mesh positions given
    // by pos_final. The bounds are determined by the values of qf_init, which
    // is defined with respect on the initial mesh.
@@ -101,7 +102,8 @@ public:
 
    // Remap of coupled indicator, density, specific internal energy for
    // single material (no voupling between materials).
-   void RemapIndRhoE(const Vector ind_rho_e_0, const ParGridFunction &pos_final,
+   void RemapIndRhoE(const Vector &ind_rho_e_0, Array<bool> &active_el_0,
+                     const ParGridFunction &pos_final,
                      Vector &ind_rho_e, int opt_type);
 
    bool visualization = true;
