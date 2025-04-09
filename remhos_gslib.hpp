@@ -76,6 +76,9 @@ private:
                        const Vector &pos_final,
                        Vector &g_min, Vector &g_max);
 
+   void CheckBounds(int myid, const Vector &v,
+                    const Vector &v_min, const Vector &v_max);
+
 public:
    InterpolationRemap(ParMesh &m)
        : pmesh_init(m), pmesh_final(pmesh_init, true),

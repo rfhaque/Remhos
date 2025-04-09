@@ -176,8 +176,6 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
 #endif
       }
 
-      const double rtol = 1.e-7;
-      const double atol = 1.e-7;
       Vector y_out(u_interpolated.Size());
 
       const int numContraints = 1;
@@ -188,8 +186,8 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);
-      optsolver->SetAbsTol(atol);
-      optsolver->SetRelTol(rtol);
+      optsolver->SetAbsTol(1e-7);
+      optsolver->SetRelTol(1e-7);
       optsolver->SetPrintLevel(3);
       optsolver->Mult(u_interpolated, y_out);
 
@@ -251,6 +249,9 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
                 << "Mass optimized diff %:    "
                 << fabs(mass_0 - mass_f) / mass_0 * 100 << endl;
    }
+
+   // Check for bounds violations.
+   CheckBounds(pmesh_init.GetMyRank(), u_final, u_final_min, u_final_max);
 }
 
 void InterpolationRemap::Remap(const QuadratureFunction &u_0,
@@ -415,6 +416,9 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
                 << "Mass optimized diff %:    "
                 << fabs(mass_0 - mass_f)/mass_0*100 << endl;
    }
+
+   // Check for bounds violations.
+   CheckBounds(pmesh_init.GetMyRank(), u, u_min, u_max);
 }
 
 void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
@@ -659,13 +663,13 @@ void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
    offset[2] = offset[1] + size_qf;
    offset[3] = offset[2] + size_gf;
 
-   BlockVector initial_desing(offset);
+   BlockVector initial_design(offset);
    BlockVector x_min(offset);
    BlockVector x_max(offset);
 
-   initial_desing.GetBlock(0) = ind;
-   initial_desing.GetBlock(1) = rho;
-   initial_desing.GetBlock(2) = e;
+   initial_design.GetBlock(0) = ind;
+   initial_design.GetBlock(1) = rho;
+   initial_design.GetBlock(2) = e;
 
    x_min.GetBlock(0) = ind_min;
    x_min.GetBlock(1) = rho_min;
@@ -674,12 +678,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
    x_max.GetBlock(1) = rho_max;
    x_max.GetBlock(2) = e_max;
 
-   // mfem_error("fill x min and make sure all block vertors are true vetors");
-
-   if (opt_type == 0)
-   {
-      //u_final = u_interpolated;
-   }
+   if (opt_type == 0) { }
    else if (opt_type == 1)
    {
       *x = pos_final;
@@ -693,12 +692,12 @@ void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
       }
 
       Vector y_out(ind_rho_e.Size());
-      y_out = initial_desing;
-      ind_rho_e = initial_desing;
+      y_out = initial_design;
+      ind_rho_e = initial_design;
 
       RemhosIndRhoEHiOpProblem ot_prob(*qspace, *pfes_e,
                                        pos_final,
-                                       initial_desing,
+                                       initial_design,
                                        ind_rho_e,
                                        x_min, x_max,
                                        volume_0, mass_0, energy_0,
@@ -786,6 +785,14 @@ void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
                 << (energy_f_opt- energy_0) / energy_0 * 100
                 << endl;
    }
+
+   // Check for bounds violations.
+   if (Mpi::Root()) { std::cout << "-------\nIndicator violations: \n"; }
+   CheckBounds(pmesh_init.GetMyRank(), ind, ind_min, ind_max);
+   if (Mpi::Root()) { std::cout << "*\nDensity violations: \n"; }
+   CheckBounds(pmesh_init.GetMyRank(), rho, rho_min, rho_max);
+   if (Mpi::Root()) { std::cout << "*\nInternal Energy violations: \n"; }
+   CheckBounds(pmesh_init.GetMyRank(), e, e_min, e_max);
 }
 
 void InterpolationRemap::GetDOFPositions(const ParFiniteElementSpace &pfes,
@@ -1079,6 +1086,34 @@ void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
    //       el_e_idx += nqp;
    //    }
    // }
+}
+
+void InterpolationRemap::CheckBounds(int myid, const Vector &v,
+                                     const Vector &v_min, const Vector &v_max)
+{
+   int err_cnt = 0;
+   double err_max = 0.0;
+   for (int i = 0; i < v.Size(); i++)
+   {
+      if (v(i) < v_min(i) - 1e-12)
+      {
+         err_cnt++;
+         err_max = std::max(err_max, v_min(i) - v(i));
+      }
+      if (v(i) > v_max(i) + 1e-12)
+      {
+         err_cnt++;
+         err_max = std::max(err_max, v(i) - v_max(i));
+      }
+   }
+   MPI_Allreduce(MPI_IN_PLACE, &err_cnt, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+   MPI_Allreduce(MPI_IN_PLACE, &err_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+   if (myid == 0)
+   {
+      std::cout << "Bound errors: " << err_cnt << std::endl
+                << "Max error:    " << err_max << std::endl;
+   }
 }
 
 } // namespace mfem
