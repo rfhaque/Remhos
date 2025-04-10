@@ -1091,9 +1091,10 @@ void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
 void InterpolationRemap::CheckBounds(int myid, const Vector &v,
                                      const Vector &v_min, const Vector &v_max)
 {
+   int s = v.Size();
    int err_cnt = 0;
    double err_max = 0.0;
-   for (int i = 0; i < v.Size(); i++)
+   for (int i = 0; i < s; i++)
    {
       if (v(i) < v_min(i) - 1e-12)
       {
@@ -1106,13 +1107,18 @@ void InterpolationRemap::CheckBounds(int myid, const Vector &v,
          err_max = std::max(err_max, v(i) - v_max(i));
       }
    }
+   MPI_Allreduce(MPI_IN_PLACE, &s, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
    MPI_Allreduce(MPI_IN_PLACE, &err_cnt, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
    MPI_Allreduce(MPI_IN_PLACE, &err_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+   double m = v.Max();
+   MPI_Allreduce(MPI_IN_PLACE, &m, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
    if (myid == 0)
    {
-      std::cout << "Bound errors: " << err_cnt << std::endl
-                << "Max error:    " << err_max << std::endl;
+      std::cout << "Bound errors: " << err_cnt
+                << " (out of " << s << " values )\n"
+                << "Max error:    " << err_max
+                << " (max function value is " << m << ")\n";
    }
 }
 
