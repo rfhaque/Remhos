@@ -45,6 +45,11 @@ for method in "${methods[@]}"; do
   echo -e $run_line >> $file
   $run_line | grep -e 'Mass initial' -e 'Mass interpolated diff:' -e 'Mass optimized diff:' >> $file
 
+  echo -e '\n'"- 2D scalar constant QuadratureFunction" >> $file
+  run_line=$command" -m ./data/inline-quad.mesh -p 18 -rs 4 -tf 0.75 -mono 4 "$method
+  echo -e $run_line >> $file
+  $run_line | grep -e 'Mass initial' -e 'Mass interpolated diff:' -e 'Mass optimized diff:' >> $file
+
   echo -e '\n'"- 3D scalar QuadratureFunction" >> $file
   run_line=$command" -m ./data/cube01_hex.mesh -p 10 -rs 3 -o 2 -tf 0.5 -mono 4 "$method
   echo -e $run_line >> $file

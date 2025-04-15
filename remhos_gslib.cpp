@@ -311,7 +311,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
 
    // Compute min / max bounds.
    Vector u_min, u_max;
-   CalcQuadBounds(u_0, u, pos_final, u_min, u_max, ELEM_INIT);
+   CalcQuadBounds(u_0, u, pos_final, u_min, u_max, ELEM_FINAL);
    if (visualization)
    {
       QuadratureFunction gf_min(qspace), gf_max(qspace);
