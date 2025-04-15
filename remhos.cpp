@@ -1005,6 +1005,7 @@ int main(int argc, char *argv[])
       interpolator.visualization = visualization;
       interpolator.h1_seminorm   = h1_seminorm;
       interpolator.max_iter      = max_opt_iter;
+      interpolator.SetQuadratureSpace(qspace);
       interpolator.Remap(u_qf, x_final, uu_qf, optimization_type);
 
       if (visualization)
@@ -1795,6 +1796,7 @@ void velocity_function(const Vector &x, Vector &v)
       case 15:
       case 16:
       case 17:
+      case 18:
       {
          // Taylor-Green deformation used for mesh motion in remap tests.
 
@@ -2046,6 +2048,13 @@ double u0_function(const Vector &x)
          double r = x.Norml2();
          double a = 0.5, b = 3.e-2, c = 0.1;
          return 0.25*(1.+tanh((r+c-a)/b))*(1.-tanh((r-c-a)/b));
+      }
+      case 8:
+      {
+         const double eps = 1e-10;
+         if (X(0) > -0.5 - eps && X(0) < 0.5 + eps &&
+             X(1) > -0.5 - eps && X(1) < 0.5 + eps) { return 1.0; }
+         else { return 0.0; }
       }
    }
    return 0.0;

@@ -311,7 +311,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
 
    // Compute min / max bounds.
    Vector u_min, u_max;
-   CalcQuadBounds(u_0, pos_final, u_min, u_max);
+   CalcQuadBounds(u_0, u, pos_final, u_min, u_max, ELEM_INIT);
    if (visualization)
    {
       QuadratureFunction gf_min(qspace), gf_max(qspace);
@@ -651,9 +651,9 @@ void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
 
    // Compute min / max bounds.
    Vector ind_min, ind_max;
-   CalcQuadBounds(ind_0, pos_final, ind_min, ind_max);
+   CalcQuadBounds(ind_0, ind, pos_final, ind_min, ind_max, ELEM_INIT);
    Vector rho_min, rho_max;
-   CalcQuadBounds(rho_0, pos_final, rho_min, rho_max);
+   CalcQuadBounds(rho_0, rho, pos_final, rho_min, rho_max, ELEM_INIT);
    Vector e_min, e_max;
    CalcDOFBounds(e_0, *pfes_e, pos_final, e_min, e_max, true, &active_el_0);
 
@@ -1017,75 +1017,68 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
 }
 
 void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
+                                        const QuadratureFunction &qf_interp,
                                         const Vector &pos_final,
-                                        Vector &g_min, Vector &g_max)
+                                        Vector &g_min, Vector &g_max,
+                                        BoundsType bounds_type)
 {
    const int size_res = qf_init.Size(), NE = pmesh_init.GetNE();
    g_min.SetSize(size_res);
    g_max.SetSize(size_res);
+   g_min = qf_interp;
+   g_max = qf_interp;
 
-   // Form the min and max functions on every MPI task.
-   L2_FECollection fec_L2(0, pmesh_init.Dimension());
-   ParFiniteElementSpace pfes_L2(&pmesh_init, &fec_L2);
-   ParGridFunction g_el_min(&pfes_L2), g_el_max(&pfes_L2);
-   for (int e = 0; e < NE; e++)
+   if (bounds_type == ELEM_INIT || bounds_type == ELEM_BOTH)
    {
-      Vector q_vals;
-      qf_init.GetValues(e, q_vals);
-      g_el_min(e) = q_vals.Min();
-      g_el_max(e) = q_vals.Max();
+      // Form the min and max functions on every MPI task.
+      L2_FECollection fec_L2(0, pmesh_init.Dimension());
+      ParFiniteElementSpace pfes_L2(&pmesh_init, &fec_L2);
+      ParGridFunction g_el_min(&pfes_L2), g_el_max(&pfes_L2);
+      for (int e = 0; e < NE; e++)
+      {
+         Vector q_vals;
+         qf_init.GetValues(e, q_vals);
+         g_el_min(e) = q_vals.Min();
+         g_el_max(e) = q_vals.Max();
+      }
+
+      Vector pos_quads_final;
+      auto qspace = dynamic_cast<const QuadratureSpace *>(qf_init.GetSpace());
+      GetQuadPositions(*qspace, pos_final, pos_quads_final);
+
+      FindPointsGSLIB finder(pmesh_init.GetComm());
+      finder.Setup(pmesh_init);
+      finder.Interpolate(pos_quads_final, g_el_min, g_min);
+      finder.Interpolate(pos_quads_final, g_el_max, g_max);
+      finder.FreeData();
    }
 
-   Vector pos_quads_final;
-   auto qspace = dynamic_cast<const QuadratureSpace *>(qf_init.GetSpace());
-   GetQuadPositions(*qspace, pos_final, pos_quads_final);
-
-   FindPointsGSLIB finder(pmesh_init.GetComm());
-   finder.Setup(pmesh_init);
-   finder.Interpolate(pos_quads_final, g_el_min, g_min);
-   finder.Interpolate(pos_quads_final, g_el_max, g_max);
-   finder.FreeData();
-
-   // Note that for QuadratureFunctions, we don't take the min/max over the
-   // values in the same element (commented below).
-   // In particular, for quadratures points found in empty zones, the
-   // min and max values will stay at zero, so the point will stay empty. This
-   // also guarantees preservation of (locally) constant QuadratureFunctions.
-
    // On the new mesh, take min/max over quads in the same element.
-   // if (use_el_nbr)
-   // {
-   //    int el_e_idx = 0;
-   //    for (int e = 0; e < NE; e++)
-   //    {
-   //       const IntegrationRule &ir = qspace->GetElementIntRule(e);
-   //       const int nqp = ir.GetNPoints();
+   if (bounds_type == ELEM_FINAL || bounds_type == ELEM_BOTH)
+   {
+      int el_e_idx = 0;
+      for (int e = 0; e < NE; e++)
+      {
+         const IntegrationRule &ir = qspace->GetElementIntRule(e);
+         const int nqp = ir.GetNPoints();
 
-   //       double min_el =   std::numeric_limits<double>::infinity(),
-   //              max_el = - std::numeric_limits<double>::infinity();
-   //       bool has_value = false;
-   //       for (int q = 0; q < nqp; q++)
-   //       {
-   //          if (g_min(el_e_idx + q) != EMPTY_VALUE)
-   //          {
-   //             has_value = true;
-   //             min_el = std::min(min_el, g_min(el_e_idx + q));
-   //             max_el = std::max(max_el, g_max(el_e_idx + q));
-   //          }
-   //       }
+         double min_el =   std::numeric_limits<double>::infinity(),
+                max_el = - std::numeric_limits<double>::infinity();
+         for (int q = 0; q < nqp; q++)
+         {
+            min_el = std::min(min_el, g_min(el_e_idx + q));
+            max_el = std::max(max_el, g_max(el_e_idx + q));
+         }
 
-   //       // The element is completely empty -> we want to get zeros in it.
-   //       if (has_value == false) { min_el = max_el = 0.0; }
+         for (int q = 0; q < nqp; q++)
+         {
+            g_min(el_e_idx + q) = min_el;
+            g_max(el_e_idx + q) = max_el;
+         }
 
-   //       for (int q = 0; q < nqp; q++)
-   //       {
-   //          g_min(el_e_idx + q) = min_el;
-   //          g_max(el_e_idx + q) = max_el;
-   //       }
-
-   //       el_e_idx += nqp;
-   //    }
-   // }
+         el_e_idx += nqp;
+      }
+   }
 }
 
 void InterpolationRemap::CheckBounds(int myid, const Vector &v,

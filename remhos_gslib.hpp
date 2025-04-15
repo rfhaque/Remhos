@@ -29,6 +29,17 @@ void InitializeQuadratureFunction(Coefficient &c,
 void VisQuadratureFunction(ParMesh &pmesh, QuadratureFunction &q,
                            std::string info, int x, int y);
 
+// How to choose the bounds for a given DOF on the final mesh.
+// ELEM_INIT:  find its corresponding elem on the initial mesh, take min / max.
+//             * piecewise constant initial solution -> no room to move.
+//             * DOFs inside the final elem can have varying bounds.
+// ELEM_FINAL: interpolate, go over its elem on the final mesh, take min / max.
+//             * might be restrictive - sees only some of the initial values.
+//             * DOFs inside the final elem have the same bounds.
+// ELEM_BOTH:  take min / max over both ELEM_INIT and ELEM_FINAL bounds.
+//             * this is the most diffusive approach (widest bounds).
+enum BoundsType {ELEM_INIT, ELEM_FINAL, ELEM_BOTH};
+
 class InterpolationRemap
 {
 private:
@@ -73,8 +84,9 @@ private:
    // by pos_final. The bounds are determined by the values of qf_init, which
    // is defined with respect on the initial mesh.
    void CalcQuadBounds(const QuadratureFunction &qf_init,
+                       const QuadratureFunction &qf_interp,
                        const Vector &pos_final,
-                       Vector &g_min, Vector &g_max);
+                       Vector &g_min, Vector &g_max, BoundsType bounds_type);
 
    void CheckBounds(int myid, const Vector &v,
                     const Vector &v_min, const Vector &v_max);
