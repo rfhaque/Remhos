@@ -721,39 +721,32 @@ void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
       target_volume[0] = volume_0;
       target_volume[1] = mass_0;
       target_volume[2] = energy_0;
-      IndRhoEVolumeProjector projector(target_volume, pos_final,
-                                       *qspace, *pfes_e, ind_rho_e);
+      IndRhoEVolumeProjectorCorrect projector(target_volume, pos_final,
+                                              *qspace, *pfes_e, ind_rho_e);
       Vector psi(ind_rho_e);
-      Vector search_l(3), search_r(3), lambda(3);
-      search_l = infinity(); search_r = -infinity();
       int offset = 0;
       for (int i=0; i<ind.Size(); i++)
       {
          psi[i] = inv_sigmoid(psi[i], ind_min[i], ind_max[i]);
-         search_l[0] = std::min(search_l[0], psi[i]);
-         search_r[0] = std::max(search_r[0], psi[i]);
       }
       offset += ind.Size();
       for (int i=0; i<rho.Size(); i++)
       {
          psi[offset + i] = inv_sigmoid(psi[offset + i], rho_min[i], rho_max[i]);
-         search_l[1] = std::min(search_l[1], psi[offset + i]);
-         search_r[1] = std::max(search_r[1], psi[offset + i]);
       }
       offset += rho.Size();
-      for (int i=0; i<e.Size(); i++)
-      {
-         psi[offset + i] = inv_sigmoid(psi[offset + i], e_min[i], e_max[i]);
-         search_l[2] = std::min(search_l[2], psi[offset + i]);
-         search_r[2] = std::max(search_r[2], psi[offset + i]);
-      }
-      MPI_Allreduce(MPI_IN_PLACE, &search_l[0], 3, MFEM_MPI_REAL_T, MPI_MIN,
-                    pmesh_init.GetComm());
-      MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 3, MFEM_MPI_REAL_T, MPI_MAX,
-                    pmesh_init.GetComm());
-      projector.SetVerbose(2);
-      projector.Apply(psi, x_min, x_max, 1.0,
-                      search_l, search_r, lambda, max_iter);
+      L2_FECollection nodal_fec(pfes_e->GetOrder(0), pfes_e->GetParMesh()->Dimension());
+      ParFiniteElementSpace pfes_nodal(pfes_e->GetParMesh(), &nodal_fec);
+      ParGridFunction E_gf(pfes_e, ind_rho_e.GetData() + offset);
+      ParGridFunction lower_gf(&pfes_nodal, e_min);
+      ParGridFunction upper_gf(&pfes_nodal, e_max);
+      LogitCoefficient logit_coeff(E_gf, lower_gf, upper_gf);
+      ParGridFunction psi_gf(&pfes_nodal, psi.GetData() + offset);
+      psi_gf.ProjectCoefficient(logit_coeff);
+      projector.SetVerbose(1);
+      Vector search_l, search_r, lambda; // not used anymore..
+      projector.Apply(psi, x_min, x_max, 1e-01,
+                      search_l, search_r, lambda, 1e03);
    }
    else { MFEM_ABORT("not implemented!"); }
 
