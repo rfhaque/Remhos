@@ -2074,9 +2074,11 @@ double s0_function(const Vector &x)
    switch (problem_num)
    {
       // Simple nonlinear function.
-      case 14: return 2.0 + sin(2*M_PI * x(0)) * sin(2*M_PI * x(1));
+      case 14:
+      case 18: return 2.0 + sin(2*M_PI * x(0)) * sin(2*M_PI * x(1));
       // Constant.
-      case 34: return 7.0;
+      case 34:
+      case 38: return 7.0;
       default: MFEM_ABORT("s0 is not defined for this problem.");
    }
 }
@@ -2086,9 +2088,11 @@ double q0_function(const Vector &x)
    switch (problem_num)
    {
       // Simple nonlinear function.
-      case 14: return 2.0 + cos(2*M_PI * x(0)) * cos(2*M_PI * x(1));
+      case 14:
+      case 18: return 2.0 + cos(2*M_PI * x(0)) * cos(2*M_PI * x(1));
       // Constant.
-      case 34: return 10.0;
+      case 34:
+      case 38: return 10.0;
       default: MFEM_ABORT("s0 is not defined for this problem.");
    }
 }

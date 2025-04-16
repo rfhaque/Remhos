@@ -88,6 +88,15 @@ private:
                        const Vector &pos_final,
                        Vector &g_min, Vector &g_max, BoundsType bounds_type);
 
+   void CalcRhoBounds(const QuadratureFunction &rho_interp,
+                      const QuadratureFunction &ind_interp,
+                      const Vector &ind_max,
+                      Vector &rho_min, Vector &rho_max);
+
+   void CalcEBounds(const ParGridFunction &e_interp,
+                    const Vector &ind_max,
+                    Vector &e_min, Vector &e_max);
+
    void CheckBounds(int myid, const Vector &v,
                     const Vector &v_min, const Vector &v_max);
 
