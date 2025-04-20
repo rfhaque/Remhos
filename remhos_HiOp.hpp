@@ -22,30 +22,40 @@
 namespace mfem
 {
 
+void GetOptimizationSubsetInd(
+      const mfem::Vector & xmin, const mfem::Vector & xmax, mfem::Array<int> & optInd);
+
+int GetSizeOptimizationSubset(const mfem::Vector & xmin, const mfem::Vector & xmax);
+
+
 class RemhosHiOpProblem : public OptimizationProblem
 {
 private:
    const ParGridFunction x_initial;
    ParFiniteElementSpace & fespace;
-   const Vector & designVar;
+   const int NumDesVar_;
    Vector d_lo, d_hi, massvec;
 
    double targetMass;
    double H1SemiNormWeight = 0.0;
+   mfem::Array<int> optProbInd;
+   bool subproblem = false;
 
 public:
    RemhosHiOpProblem(ParFiniteElementSpace &space,
                      const ParGridFunction &u_initial,
-                     const Vector &design_Var,
+                     const int &numDesVar,
                      const Vector &xmin, 
                      const Vector &xmax, 
                      double initalmass,
                      int numConstraints_,
-                     bool use_H1_semi)
-      : OptimizationProblem(design_Var.Size(), NULL, NULL),
-        x_initial(u_initial), fespace(space), designVar(design_Var),
+                     bool use_H1_semi,
+                     const mfem::Array<int> & optProbInd_,
+                     bool sub =false)
+      : OptimizationProblem(numDesVar, NULL, NULL),
+        x_initial(u_initial), fespace(space), NumDesVar_(numDesVar),
         d_lo(numConstraints_), d_hi(numConstraints_), massvec(numConstraints_),
-        targetMass(initalmass)
+        targetMass(initalmass), optProbInd(optProbInd_), subproblem(sub)
    {
       numConstraints = numConstraints_;
       SetEqualityConstraint(massvec);
@@ -64,8 +74,23 @@ public:
 
    virtual double CalcObjective(const Vector &x) const
    {
+
+      ParGridFunction x_interpolated(&fespace); 
+
+      if(subproblem)
+      {
+         x_interpolated = x_initial;
+         //x_interpolated.SetTrueVector();
+         //Vector & truexInterp = x_interpolated.GetTrueVector();
+         x_interpolated.SetSubVector(optProbInd,x);
+         //x_interpolated.SetFromTrueVector();
+      }
+      else
+      {
+         x_interpolated.SetFromTrueDofs(x);
+      }
+
       ParGridFunction x_diff(&fespace); x_diff = 0.0;
-      ParGridFunction x_interpolated(&fespace); x_interpolated.SetFromTrueDofs(x);
       subtract( x_interpolated, x_initial, x_diff);
 
       // L2 norm (0.5*(u_1-u_0)^2)
@@ -98,31 +123,69 @@ public:
 
    virtual void CalcObjectiveGrad(const Vector &x, Vector &grad) const
    {
+
+      ParGridFunction x_interpolated(&fespace); 
+      if(subproblem)
+      {
+         x_interpolated = x_initial;
+         x_interpolated.SetSubVector(optProbInd,x);
+      }
+      else
+      {
+         x_interpolated.SetFromTrueDofs(x);
+      }
+
       ParGridFunction x_diff(&fespace); x_diff = 0.0;
-      ParGridFunction x_interpolated(&fespace); x_interpolated.SetFromTrueDofs(x);
       subtract(1.0, x_interpolated, x_initial, x_diff);
 
       ParLinearForm dQdeta(&fespace);
       GridFunctionCoefficient x_diff_coeff(&x_diff);
 
-	   	GradientGridFunctionCoefficient GradientCoeff_new(&x_interpolated);
-      	GradientGridFunctionCoefficient GradientCoeff_old(&x_initial);
+      GradientGridFunctionCoefficient GradientCoeff_new(&x_interpolated);
+      GradientGridFunctionCoefficient GradientCoeff_old(&x_initial);
       VectorSumCoefficient new_minus_old_coeff(GradientCoeff_new, GradientCoeff_old, 1.0, -1.0);
 
-         ScalarVectorProductCoefficient a_timesB(H1SemiNormWeight*2.0, new_minus_old_coeff );
+      ScalarVectorProductCoefficient a_timesB(H1SemiNormWeight*2.0, new_minus_old_coeff );
 
+      mfem::Vector tempGrad(x_interpolated.Size());
 
       auto *lfi_1 = new DomainLFIntegrator(x_diff_coeff);
       auto *lfi_2 = new DomainLFGradIntegrator(a_timesB);
 
       dQdeta.AddDomainIntegrator(lfi_1);
       dQdeta.AddDomainIntegrator(lfi_2);
+
       dQdeta.Assemble();
-      dQdeta.ParallelAssemble(grad);
+      dQdeta.ParallelAssemble(tempGrad);
+
+      if(subproblem)
+      {
+         tempGrad.GetSubVector(optProbInd,grad);
+      }
+      else
+      {
+         grad = tempGrad;
+      } 
    }
 
    virtual void CalcConstraintGrad(const int constNumber, const Vector &x, Vector &grad) const
    {
+      ParGridFunction x_interpolated(&fespace); 
+      if(subproblem)
+      {
+         x_interpolated = x_initial;
+         //x_interpolated.SetTrueVector();
+         //Vector & truexInterp = x_interpolated.GetTrueVector();
+         x_interpolated.SetSubVector(optProbInd,x);
+         //x_interpolated.SetFromTrueVector();
+      }
+      else
+      {
+         x_interpolated.SetFromTrueDofs(x);
+      }
+
+      mfem::Vector tempGrad(x_interpolated.Size());
+
       if( constNumber == 0)
       {
          ParLinearForm dConstdeta(&fespace); dConstdeta = 0.0;
@@ -131,42 +194,55 @@ public:
 
          dConstdeta.AddDomainIntegrator(constrlfi);
          dConstdeta.Assemble();
-         dConstdeta.ParallelAssemble(grad);
+         dConstdeta.ParallelAssemble(tempGrad);
       }
       else if( constNumber == 1)
       {
-         ParGridFunction x_interpolated(&fespace); x_interpolated.SetFromTrueDofs(x);   
-
          ParLinearForm dConstdeta(&fespace); dConstdeta = 0.0;
          GridFunctionCoefficient dGF_coeff(&x_interpolated);
          auto *constrlfi = new DomainLFIntegrator(dGF_coeff);
 
          dConstdeta.AddDomainIntegrator(constrlfi);
          dConstdeta.Assemble();
-         dConstdeta.ParallelAssemble(grad);
+         dConstdeta.ParallelAssemble(tempGrad);
 
          grad *= 2.0;
       }
+      if(subproblem){ tempGrad.GetSubVector(optProbInd,grad); }
+      else { grad = tempGrad; } 
    }
 
    virtual void CalcConstraint(const int constNumber, const Vector &x, Vector &constVal) const
    {
+      ParGridFunction x_interpolated(&fespace); 
+      if(subproblem)
+      {
+         x_interpolated = x_initial;
+         //x_interpolated.SetTrueVector();
+         //Vector & truexInterp = x_interpolated.GetTrueVector();
+         x_interpolated.SetSubVector(optProbInd,x);
+         //x_interpolated.SetFromTrueVector();
+      }
+      else
+      {
+         x_interpolated.SetFromTrueDofs(x);
+      }
+
       if( constNumber == 0)
       {
-         ParGridFunction x_interpolated(&fespace); x_interpolated.SetFromTrueDofs(x);    
          Vector * pos = fespace.GetParMesh()->GetNodes();
 
          double mass_s = calculateMass(*pos, x_interpolated);
          constVal[0] = mass_s - targetMass;
       }
       else if( constNumber == 1)
-      {
-         ParGridFunction x_interpolated(&fespace); x_interpolated.SetFromTrueDofs(x);    
+      { 
          Vector * pos = fespace.GetParMesh()->GetNodes();
 
          double mass_s = calculateMass(*pos, x_interpolated);
          constVal[0] = std::pow(mass_s, 2.0) - std::pow(targetMass, 2.0);         
       }
+ 
    }
 
 private:

@@ -21,6 +21,49 @@ using namespace std;
 
 namespace mfem
 {
+void GetOptimizationSubsetInd(
+      const mfem::Vector & xmin, const mfem::Vector & xmax, mfem::Array<int> & optInd)
+{
+      int n = xmin.Size();
+
+      int SizeOptSubset = GetSizeOptimizationSubset( xmin, xmax);
+
+      optInd.SetSize(SizeOptSubset);
+      int counter = 0;
+      double eps = 1e-10;
+
+      mfem::Vector diff(n); diff = xmin; diff -=xmax;
+
+      for( int Ik = 0; Ik < n; Ik++)
+      {
+         if( not std::abs(diff[Ik]) < eps)
+         {
+            optInd[counter] = Ik;
+            counter ++;
+         }
+      }
+}
+
+int GetSizeOptimizationSubset(const mfem::Vector & xmin, const mfem::Vector & xmax)
+{
+      int n = xmin.Size();
+      int counter = 0;
+      double eps = 1e-10;
+
+      mfem::Vector diff(n); diff = xmin; diff -=xmax;
+
+      for( int Ik = 0; Ik < n; Ik++)
+      {
+         if( not std::abs(diff[Ik]) < eps)
+         {
+            counter ++;
+         }
+      }
+
+      return counter;
+}
+
+
 RemhosIndRhoEHiOpProblem::EnergyGradIntegrator::EnergyGradIntegrator(
   const mfem::QuadratureFunction &ind, const mfem::QuadratureFunction &rho)
   : ind_(&ind), rho_(&rho) 

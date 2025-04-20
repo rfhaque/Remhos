@@ -179,19 +179,52 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       const double rtol = 1.e-7;
       const double atol = 1.e-7;
       Vector y_out(u_interpolated.Size());
+      y_out = u_interpolated;
+
+      int NumDesVar = u_interpolated.Size();
+      mfem::Array<int> optProbInd;
+      mfem::Vector u_interpolated_sub;
+      mfem::Vector y_out_sub;
+
+      mfem::Vector minsub;
+      mfem::Vector maxsub;
+
+      if(subprob)
+      {
+         NumDesVar = GetSizeOptimizationSubset(u_final_min,u_final_max);
+         GetOptimizationSubsetInd(u_final_min,u_final_max,optProbInd);
+         u_interpolated.GetSubVector(optProbInd,u_interpolated_sub);
+         y_out.GetSubVector(optProbInd,y_out_sub);
+
+         u_final_min.GetSubVector(optProbInd,minsub);
+         u_final_max.GetSubVector(optProbInd,maxsub);
+
+         u_final_min.SetSize(NumDesVar); u_final_min= minsub;
+         u_final_max.SetSize(NumDesVar); u_final_max= maxsub;
+      }
+
+      
 
       const int numContraints = 1;
       RemhosHiOpProblem ot_prob(pfes_final,
-                                u_interpolated_initial, u_interpolated,
+                                u_interpolated_initial, NumDesVar,
                                 u_final_min, u_final_max,
-                                mass_0, numContraints, h1_seminorm);
+                                mass_0, numContraints, h1_seminorm, optProbInd, subprob);
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);
       optsolver->SetAbsTol(atol);
       optsolver->SetRelTol(rtol);
       optsolver->SetPrintLevel(3);
-      optsolver->Mult(u_interpolated, y_out);
+      
+      if(subprob)
+      {
+         optsolver->Mult(u_interpolated_sub, y_out_sub);
+         y_out.SetSubVector(optProbInd,y_out_sub);
+      }
+      else{
+         optsolver->Mult(u_interpolated, y_out);
+      }
 
       // fix parallel. u_interpolated and y_out should be true vectors
       u_final = y_out;
@@ -514,9 +547,11 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
 
       const int numContraints = 1;
 
-      RemhosHiOpProblem ot_prob(*u.ParFESpace(), u, u,
+      mfem::Array<int> optProbInd;
+
+      RemhosHiOpProblem ot_prob(*u.ParFESpace(), u, u.Size(),
                                 u_final_min, u_final_max, mass,
-                                numContraints, h1_seminorm);
+                                numContraints, h1_seminorm, optProbInd);
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);

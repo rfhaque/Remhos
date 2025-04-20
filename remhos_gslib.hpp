@@ -106,6 +106,7 @@ public:
 
    bool visualization = true;
    bool h1_seminorm   = false;
+   bool subprob       = true;
    int  max_iter      = 100;
 };
 
