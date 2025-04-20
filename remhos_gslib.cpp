@@ -176,8 +176,6 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
 #endif
       }
 
-      const double rtol = 1.e-7;
-      const double atol = 1.e-7;
       Vector y_out(u_interpolated.Size());
       y_out = u_interpolated;
 
@@ -213,8 +211,8 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);
-      optsolver->SetAbsTol(atol);
-      optsolver->SetRelTol(rtol);
+      optsolver->SetAbsTol(1e-7);
+      optsolver->SetRelTol(1e-7);
       optsolver->SetPrintLevel(3);
       
       if(subprob)
@@ -284,6 +282,9 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
                 << "Mass optimized diff %:    "
                 << fabs(mass_0 - mass_f) / mass_0 * 100 << endl;
    }
+
+   // Check for bounds violations.
+   CheckBounds(pmesh_init.GetMyRank(), u_final, u_final_min, u_final_max);
 }
 
 void InterpolationRemap::Remap(const QuadratureFunction &u_0,
@@ -343,7 +344,7 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
 
    // Compute min / max bounds.
    Vector u_min, u_max;
-   CalcQuadBounds(u_0, pos_final, u_min, u_max);
+   CalcQuadBounds(u_0, u, pos_final, u_min, u_max, ELEM_FINAL);
    if (visualization)
    {
       QuadratureFunction gf_min(qspace), gf_max(qspace);
@@ -448,6 +449,9 @@ void InterpolationRemap::Remap(const QuadratureFunction &u_0,
                 << "Mass optimized diff %:    "
                 << fabs(mass_0 - mass_f)/mass_0*100 << endl;
    }
+
+   // Check for bounds violations.
+   CheckBounds(pmesh_init.GetMyRank(), u, u_min, u_max);
 }
 
 void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
@@ -585,7 +589,8 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
    }
 }
 
-void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
+void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
+                                      Array<bool> &active_el_0,
                                       const ParGridFunction &pos_final,
                                       Vector &ind_rho_e, int opt_type)
 {
@@ -681,26 +686,55 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
 
    // Compute min / max bounds.
    Vector ind_min, ind_max;
-   CalcQuadBounds(ind_0, pos_final, ind_min, ind_max);
+   CalcQuadBounds(ind_0, ind, pos_final, ind_min, ind_max, ELEM_FINAL);
    Vector rho_min, rho_max;
-   CalcQuadBounds(rho_0, pos_final, rho_min, rho_max);
+   CalcRhoBounds(rho, ind, ind_max, rho_min, rho_max);
+   // {
+   //    QuadratureFunction gf_min(qspace), gf_max(qspace);
+   //    gf_min = rho_min, gf_max = rho_max;
+
+   //    *x = pos_final;
+   //    VisQuadratureFunction(pmesh_init, ind, "ind interp", 0, 500);
+   //    VisQuadratureFunction(pmesh_init, rho, "rho interp", 0, 500);
+   //    VisQuadratureFunction(pmesh_init, gf_min, "rho_min QF", 0, 500);
+   //    VisQuadratureFunction(pmesh_init, gf_max, "rho_max QF", 400, 500);
+   //    *x = pos_init;
+   //    MFEM_ABORT("rho bounds");
+   // }
    Vector e_min, e_max;
-   CalcDOFBounds(e_0, *pfes_e, pos_final, e_min, e_max, true);
+   CalcEBounds(e, ind_max, e_min, e_max);
+   // {
+   //    ParGridFunction gf_min(e), gf_max(e);
+   //    gf_min = e_min, gf_max = e_max;
+
+   //    socketstream vis_min, vis_max;
+   //    char vishost[] = "localhost";
+   //    int  visport   = 19916;
+   //    vis_min.precision(8);
+   //    vis_max.precision(8);
+
+   //    *x = pos_final;
+   //    VisualizeField(vis_min, vishost, visport, gf_min, "e min",
+   //                   0, 500, 300, 300);
+   //    VisualizeField(vis_max, vishost, visport, gf_max, "e max",
+   //                   300, 500, 300, 300);
+   //    *x = pos_init;
+   //    MFEM_ABORT("e bounds");
+   // }
 
    Array<int> offset(4);
    offset[0] = 0;
-   offset[1] = offset[0] + size_qf ;
+   offset[1] = offset[0] + size_qf;
    offset[2] = offset[1] + size_qf;
    offset[3] = offset[2] + size_gf;
 
-   BlockVector initial_desing(offset);
+   BlockVector initial_design(offset);
    BlockVector x_min(offset);
    BlockVector x_max(offset);
 
-   initial_desing.GetBlock(0) = ind;
-   initial_desing.GetBlock(1) = rho;
-   initial_desing.GetBlock(2) = e;
-
+   initial_design.GetBlock(0) = ind;
+   initial_design.GetBlock(1) = rho;
+   initial_design.GetBlock(2) = e;
 
    x_min.GetBlock(0) = ind_min;
    x_min.GetBlock(1) = rho_min;
@@ -709,12 +743,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
    x_max.GetBlock(1) = rho_max;
    x_max.GetBlock(2) = e_max;
 
-   // mfem_error("fill x min and make sure all block vertors are true vetors");
-
-   if (opt_type == 0)
-   {
-      //u_final = u_interpolated;
-   }
+   if (opt_type == 0) { }
    else if (opt_type == 1)
    {
       *x = pos_final;
@@ -727,38 +756,26 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
 #endif
       }
 
-      const int max_iter = 500;
-      const double rtol = 1.e-7;
-      const double atol = 1.e-7;
       Vector y_out(ind_rho_e.Size());
+      y_out = initial_design;
+      ind_rho_e = initial_design;
 
-      y_out = initial_desing;
-      ind_rho_e= initial_desing;
-
-      const int numContraints = 3;
-      RemhosIndRhoEHiOpProblem ot_prob(*qspace,
-                                       *pfes_e,
+      RemhosIndRhoEHiOpProblem ot_prob(*qspace, *pfes_e,
                                        pos_final,
-                                       initial_desing,
+                                       initial_design,
                                        ind_rho_e,
-                                       x_min,
-                                       x_max,
-                                       volume_0,
-                                       mass_0,
-                                       energy_0,
-                                       numContraints,
-                                       false,
-                                       true);
+                                       x_min, x_max,
+                                       volume_0, mass_0, energy_0,
+                                       3, false, true);
 
       optsolver->SetOptimizationProblem(ot_prob);
 
       optsolver->SetMaxIter(max_iter);
-      optsolver->SetAbsTol(atol);
-      optsolver->SetRelTol(rtol);
+      optsolver->SetAbsTol(1e-7);
+      optsolver->SetRelTol(1e-7);
       optsolver->SetPrintLevel(3);
       optsolver->Mult(ind_rho_e, y_out);
 
-      // // fix parallel. u_interpolated and y_out should be true vectors
       ind_rho_e = y_out;
 
       delete optsolver;
@@ -769,46 +786,42 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
       target_volume[0] = volume_0;
       target_volume[1] = mass_0;
       target_volume[2] = energy_0;
-      IndRhoEVolumeProjector projector(target_volume, pos_final,
-                                       *qspace, *pfes_e, ind_rho_e);
+      IndRhoEVolumeProjectorCorrect projector(target_volume, pos_final,
+                                              *qspace, *pfes_e, ind_rho_e);
       Vector psi(ind_rho_e);
-      Vector search_l(3), search_r(3), lambda(3);
-      search_l = infinity(); search_r = -infinity();
       int offset = 0;
       for (int i=0; i<ind.Size(); i++)
       {
          psi[i] = inv_sigmoid(psi[i], ind_min[i], ind_max[i]);
-         search_l[0] = std::min(search_l[0], psi[i]);
-         search_r[0] = std::max(search_r[0], psi[i]);
       }
       offset += ind.Size();
       for (int i=0; i<rho.Size(); i++)
       {
          psi[offset + i] = inv_sigmoid(psi[offset + i], rho_min[i], rho_max[i]);
-         search_l[1] = std::min(search_l[1], psi[offset + i]);
-         search_r[1] = std::max(search_r[1], psi[offset + i]);
       }
       offset += rho.Size();
-      for (int i=0; i<e.Size(); i++)
-      {
-         psi[offset + i] = inv_sigmoid(psi[offset + i], e_min[i], e_max[i]);
-         search_l[2] = std::min(search_l[2], psi[offset + i]);
-         search_r[2] = std::max(search_r[2], psi[offset + i]);
-      }
-      MPI_Allreduce(MPI_IN_PLACE, &search_l[0], 3, MFEM_MPI_REAL_T, MPI_MIN,
-                    pmesh_init.GetComm());
-      MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 3, MFEM_MPI_REAL_T, MPI_MAX,
-                    pmesh_init.GetComm());
-      projector.SetVerbose(2);
-      projector.Apply(psi, x_min, x_max, 1.0, search_l, search_r, lambda, max_iter);
+      L2_FECollection nodal_fec(pfes_e->GetOrder(0), pfes_e->GetParMesh()->Dimension());
+      ParFiniteElementSpace pfes_nodal(pfes_e->GetParMesh(), &nodal_fec);
+      ParGridFunction E_gf(pfes_e, ind_rho_e.GetData() + offset);
+      ParGridFunction lower_gf(&pfes_nodal, e_min);
+      ParGridFunction upper_gf(&pfes_nodal, e_max);
+      LogitCoefficient logit_coeff(E_gf, lower_gf, upper_gf);
+      ParGridFunction psi_gf(&pfes_nodal, psi.GetData() + offset);
+      psi_gf.ProjectCoefficient(logit_coeff);
+      projector.SetVerbose(1);
+      Vector search_l, search_r, lambda; // not used anymore..
+      projector.Apply(psi, x_min, x_max, 1e-01,
+                      search_l, search_r, lambda, 1e03);
    }
+   else { MFEM_ABORT("not implemented!"); }
 
    const double volume_f_opt = Integrate(pos_final, &ind, nullptr, nullptr);
    const double mass_f_opt   = Integrate(pos_final, &ind, &rho,    nullptr);
    const double energy_f_opt = Integrate(pos_final, &ind, &rho,    &e);
    if (Mpi::Root())
    {
-      std::cout << "Volume initial:          " << volume_0 << std::endl
+      std::cout << "-------\n"
+                << "Volume initial:          " << volume_0 << std::endl
                 << "Volume optimized:        " << volume_f_opt << std::endl
                 << "Volume optimized diff:   "
                 << (volume_f_opt - volume_0) << endl
@@ -819,7 +832,7 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
                 << "Mass optimized:          " << mass_f_opt << std::endl
                 << "Mass optimized diff:     "
                 << (mass_f_opt - mass_0) << endl
-                << "Mass optimized diff %: "
+                << "Mass optimized diff %:   "
                 << (mass_f_opt - mass_0) / mass_0 * 100
                 << endl << "*\n"
                 << "Energy initial:          " << energy_0 << std::endl
@@ -830,6 +843,14 @@ void InterpolationRemap::RemapIndRhoE(const Vector ind_rho_e_0,
                 << (energy_f_opt- energy_0) / energy_0 * 100
                 << endl;
    }
+
+   // Check for bounds violations.
+   if (Mpi::Root()) { std::cout << "-------\nIndicator violations: \n"; }
+   CheckBounds(pmesh_init.GetMyRank(), ind, ind_min, ind_max);
+   if (Mpi::Root()) { std::cout << "*\nDensity violations: \n"; }
+   CheckBounds(pmesh_init.GetMyRank(), rho, rho_min, rho_max);
+   if (Mpi::Root()) { std::cout << "*\nInternal Energy violations: \n"; }
+   CheckBounds(pmesh_init.GetMyRank(), e, e_min, e_max);
 }
 
 void InterpolationRemap::GetDOFPositions(const ParFiniteElementSpace &pfes,
@@ -969,26 +990,42 @@ double InterpolationRemap::Integrate(const Vector &pos,
    return integral;
 }
 
+#define EMPTY_VALUE -1.0
+
 void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
                                        const ParFiniteElementSpace &pfes,
                                        const Vector &pos_final,
                                        Vector &g_min, Vector &g_max,
-                                       bool use_nbr)
+                                       bool use_el_nbr, Array<bool> *active_el)
 {
+   if (active_el)
+   {
+      MFEM_VERIFY(use_el_nbr == true,
+                  "Bounds around inactive elements require use_el_nbr = true.");
+   }
+
    const int size_res = pfes.GetVSize(), NE = pmesh_init.GetNE();
    g_min.SetSize(size_res);
    g_max.SetSize(size_res);
 
    // Form the min and max functions on every MPI task.
+   // All on the initial mesh.
    L2_FECollection fec_L2(0, pmesh_init.Dimension());
    ParFiniteElementSpace pfes_L2(&pmesh_init, &fec_L2);
    ParGridFunction g_el_min(&pfes_L2), g_el_max(&pfes_L2);
    for (int e = 0; e < NE; e++)
    {
-      Vector g_vals;
-      g_init.GetElementDofValues(e, g_vals);
-      g_el_min(e) = g_vals.Min();
-      g_el_max(e) = g_vals.Max();
+      if (active_el && (*active_el)[e] == false)
+      {
+         g_el_min(e) = EMPTY_VALUE;
+         g_el_max(e) = EMPTY_VALUE;
+         continue;
+      }
+
+      Vector g_init_vals;
+      g_init.GetElementDofValues(e, g_init_vals);
+      g_el_min(e) = g_init_vals.Min();
+      g_el_max(e) = g_init_vals.Max();
    }
 
    Vector pos_nodes_final;
@@ -1000,7 +1037,8 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
    finder.Interpolate(pos_nodes_final, g_el_max, g_max);
    finder.FreeData();
 
-   if (use_nbr)
+   // On the new mesh, take min/max over DOFs in the same element.
+   if (use_el_nbr)
    {
       for (int e = 0; e < NE; e++)
       {
@@ -1008,72 +1046,241 @@ void InterpolationRemap::CalcDOFBounds(const ParGridFunction &g_init,
          pfes.GetElementDofs(e, dofs);
          const int s = dofs.Size();
 
-         Vector g_vals;
-         g_min.GetSubVector(dofs, g_vals);
-         const double minv = g_vals.Min();
-         g_max.GetSubVector(dofs, g_vals);
-         const double maxv = g_vals.Max();
+         Vector g_min_el, g_max_el;
+         g_min.GetSubVector(dofs, g_min_el);
+         g_max.GetSubVector(dofs, g_max_el);
+         double min_el =   std::numeric_limits<double>::infinity(),
+                max_el = - std::numeric_limits<double>::infinity();
+         bool has_value = false;
+         for (int i = 0; i < s; i++)
+         {
+            if (g_min_el(i) != EMPTY_VALUE)
+            {
+               has_value = true;
+               min_el = std::min(min_el, g_min_el(i));
+               max_el = std::max(max_el, g_max_el(i));
+            }
+         }
+
+         // The element is completely empty -> we want to get zeros in it.
+         if (has_value == false) { min_el = max_el = 0.0; }
 
          for (int i = 0; i < s; i++)
          {
-            g_min(s * e + i) = minv;
-            g_max(s * e + i) = maxv;
+            g_min(s * e + i) = min_el;
+            g_max(s * e + i) = max_el;
          }
       }
    }
 }
 
 void InterpolationRemap::CalcQuadBounds(const QuadratureFunction &qf_init,
+                                        const QuadratureFunction &qf_interp,
                                         const Vector &pos_final,
-                                        Vector &g_min, Vector &g_max)
+                                        Vector &g_min, Vector &g_max,
+                                        BoundsType bounds_type)
 {
    const int size_res = qf_init.Size(), NE = pmesh_init.GetNE();
    g_min.SetSize(size_res);
    g_max.SetSize(size_res);
+   g_min = qf_interp;
+   g_max = qf_interp;
 
-   // Form the min and max functions on every MPI task.
-   L2_FECollection fec_L2(0, pmesh_init.Dimension());
-   ParFiniteElementSpace pfes_L2(&pmesh_init, &fec_L2);
-   ParGridFunction g_el_min(&pfes_L2), g_el_max(&pfes_L2);
-   for (int e = 0; e < NE; e++)
+   if (bounds_type == ELEM_INIT || bounds_type == ELEM_BOTH)
    {
-      Vector q_vals;
-      qf_init.GetValues(e, q_vals);
-      g_el_min(e) = q_vals.Min();
-      g_el_max(e) = q_vals.Max();
+      // Form the min and max functions on every MPI task.
+      L2_FECollection fec_L2(0, pmesh_init.Dimension());
+      ParFiniteElementSpace pfes_L2(&pmesh_init, &fec_L2);
+      ParGridFunction g_el_min(&pfes_L2), g_el_max(&pfes_L2);
+      for (int e = 0; e < NE; e++)
+      {
+         Vector q_vals;
+         qf_init.GetValues(e, q_vals);
+         g_el_min(e) = q_vals.Min();
+         g_el_max(e) = q_vals.Max();
+      }
+
+      Vector pos_quads_final;
+      auto qspace = dynamic_cast<const QuadratureSpace *>(qf_init.GetSpace());
+      GetQuadPositions(*qspace, pos_final, pos_quads_final);
+
+      FindPointsGSLIB finder(pmesh_init.GetComm());
+      finder.Setup(pmesh_init);
+      finder.Interpolate(pos_quads_final, g_el_min, g_min);
+      finder.Interpolate(pos_quads_final, g_el_max, g_max);
+      finder.FreeData();
    }
 
-   Vector pos_quads_final;
-   auto qspace = dynamic_cast<const QuadratureSpace *>(qf_init.GetSpace());
-   GetQuadPositions(*qspace, pos_final, pos_quads_final);
+   // On the new mesh, take min/max over quads in the same element.
+   if (bounds_type == ELEM_FINAL || bounds_type == ELEM_BOTH)
+   {
+      int el_e_idx = 0;
+      for (int e = 0; e < NE; e++)
+      {
+         const IntegrationRule &ir = qspace->GetElementIntRule(e);
+         const int nqp = ir.GetNPoints();
 
-   FindPointsGSLIB finder(pmesh_init.GetComm());
-   finder.Setup(pmesh_init);
-   finder.Interpolate(pos_quads_final, g_el_min, g_min);
-   finder.Interpolate(pos_quads_final, g_el_max, g_max);
-   finder.FreeData();
+         double min_el =   std::numeric_limits<double>::infinity(),
+                max_el = - std::numeric_limits<double>::infinity();
+         for (int q = 0; q < nqp; q++)
+         {
+            min_el = std::min(min_el, g_min(el_e_idx + q));
+            max_el = std::max(max_el, g_max(el_e_idx + q));
+         }
 
-   // int el_e_idx = 0;
-   // for (int e = 0; e < NE; e++)
-   // {
-   //    const IntegrationRule &ir = qspace->GetElementIntRule(e);
-   //    const int nqp = ir.GetNPoints();
+         for (int q = 0; q < nqp; q++)
+         {
+            g_min(el_e_idx + q) = min_el;
+            g_max(el_e_idx + q) = max_el;
+         }
 
-   //    double minv = g_min(el_e_idx), maxv = g_max(el_e_idx);
-   //    for (int q = 1; q < nqp; q++)
-   //    {
-   //       minv = fmin(minv, g_min(el_e_idx + q));
-   //       maxv = fmax(maxv, g_max(el_e_idx + q));
-   //    }
+         el_e_idx += nqp;
+      }
+   }
+}
 
-   //    for (int q = 0; q < nqp; q++)
-   //    {
-   //       g_min(el_e_idx + q) = minv;
-   //       g_max(el_e_idx + q) = maxv;
-   //    }
+void InterpolationRemap::CalcRhoBounds(const QuadratureFunction &rho_interp,
+                                       const QuadratureFunction &ind_interp,
+                                       const Vector &ind_max,
+                                       Vector &rho_min, Vector &rho_max)
+{
+   const int size_rho = rho_interp.Size(), NE = pmesh_init.GetNE();
+   rho_min.SetSize(size_rho); rho_max.SetSize(size_rho);
 
-   //    el_e_idx += nqp;
-   // }
+   int el_e_idx = 0;
+   for (int e = 0; e < NE; e++)
+   {
+      const IntegrationRule &ir = qspace->GetElementIntRule(e);
+      const int nqp = ir.GetNPoints();
+
+      // Min and max density in the new mesh element.
+      double el_min =   std::numeric_limits<double>::infinity(),
+             el_max = - std::numeric_limits<double>::infinity();
+      bool el_has_ind_value = false, el_has_ind_max = false;
+      for (int q = 0; q < nqp; q++)
+      {
+         // Bounds are taken only from points where material is present.
+         if (ind_interp(el_e_idx + q) > 1e-12)
+         {
+            el_has_ind_value = true;
+            el_min = std::min(el_min, rho_interp(el_e_idx + q));
+            el_max = std::max(el_max, rho_interp(el_e_idx + q));
+         }
+         if (ind_max(el_e_idx + q) > 1e-12) { el_has_ind_max = true; }
+      }
+
+      // The new mesh element is completely empty -> we want zeros in it.
+      if (el_has_ind_value == false)
+      {
+         MFEM_VERIFY(el_has_ind_max == false, "Indicator values / bound mess!");
+         el_min = el_max = 0.0;
+      }
+
+      for (int q = 0; q < nqp; q++)
+      {
+         // Bounds are set only where the material will be present. This is a
+         // special case for QuadratureFunctions to get sub-element behavior.
+         if (ind_max(el_e_idx + q) > 1e-12)
+         {
+            rho_min(el_e_idx + q) = el_min;
+            rho_max(el_e_idx + q) = el_max;
+         }
+         else
+         {
+            // No material at the DOF.
+            rho_min(el_e_idx + q) = 0.0;
+            rho_max(el_e_idx + q) = 0.0;
+         }
+      }
+
+      el_e_idx += nqp;
+   }
+}
+
+void InterpolationRemap::CalcEBounds(const ParGridFunction &e_interp,
+                                     const Vector &ind_max,
+                                     Vector &e_min, Vector &e_max)
+{
+   const int size_e = e_interp.Size(), NE = pmesh_init.GetNE();
+   const int s = size_e / NE;
+   e_min.SetSize(size_e); e_max.SetSize(size_e);
+
+   for (int e = 0; e < NE; e++)
+   {
+      const IntegrationRule &ir = qspace->GetElementIntRule(e);
+      const int nqp = ir.GetNPoints();
+
+      // Check if the new mesh element has material.
+      bool el_has_ind = false;
+      for (int q = 0; q < nqp; q++)
+      {
+         if (ind_max(e*nqp + q) > 1e-12) { el_has_ind = true; break; }
+      }
+
+      // Min and max energy in the new mesh element.
+      double el_min =   std::numeric_limits<double>::infinity(),
+             el_max = - std::numeric_limits<double>::infinity();
+      // The new mesh element is completely empty -> we want zeros in it.
+      if (el_has_ind == false) { el_min = el_max = 0.0; }
+      else
+      {
+         Vector e_interp_el;
+         e_interp.GetElementDofValues(e, e_interp_el);
+         bool el_has_e_value = true;
+         for (int i = 0; i < s; i++)
+         {
+            // Don't consider zeros for the bounds. The assumption is that those
+            // DOFs fall in initial mesh elements with no material.
+            if (fabs(e_interp_el(i)) > 1e-14)
+            {
+               el_has_e_value = true;
+               el_min = std::min(el_min, e_interp_el(i));
+               el_max = std::max(el_max, e_interp_el(i));
+            }
+         }
+         MFEM_VERIFY(el_has_e_value == true, "No e values in the new element!");
+      }
+
+      for (int i = 0; i < s; i++)
+      {
+         e_min(s * e + i) = el_min;
+         e_max(s * e + i) = el_max;
+      }
+   }
+}
+
+void InterpolationRemap::CheckBounds(int myid, const Vector &v,
+                                     const Vector &v_min, const Vector &v_max)
+{
+   int s = v.Size();
+   int err_cnt = 0;
+   double err_max = 0.0;
+   for (int i = 0; i < s; i++)
+   {
+      if (v(i) < v_min(i) - 1e-12)
+      {
+         err_cnt++;
+         err_max = std::max(err_max, v_min(i) - v(i));
+      }
+      if (v(i) > v_max(i) + 1e-12)
+      {
+         err_cnt++;
+         err_max = std::max(err_max, v(i) - v_max(i));
+      }
+   }
+   MPI_Allreduce(MPI_IN_PLACE, &s, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+   MPI_Allreduce(MPI_IN_PLACE, &err_cnt, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+   MPI_Allreduce(MPI_IN_PLACE, &err_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+   double m = v.Max();
+   MPI_Allreduce(MPI_IN_PLACE, &m, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+   if (myid == 0)
+   {
+      std::cout << "Bound errors: " << err_cnt
+                << " (out of " << s << " values )\n"
+                << "Max error:    " << err_max
+                << " (max function value is " << m << ")\n";
+   }
 }
 
 } // namespace mfem
