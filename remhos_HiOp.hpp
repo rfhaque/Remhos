@@ -41,6 +41,8 @@ private:
    mfem::Array<int> optProbInd;
    bool subproblem = false;
 
+   mutable ParBilinearForm * mass_form =nullptr;
+
 public:
    RemhosHiOpProblem(ParFiniteElementSpace &space,
                      const ParGridFunction &u_initial,
@@ -168,6 +170,23 @@ public:
       } 
    }
 
+   virtual void CalcObjectiveHessian( HypreParMatrix * Hess) const override
+   {
+      if(subproblem)
+      {
+         mfem_error("CalcObjectiveHessian not implemented for subproblem option");
+      }
+
+      delete(mass_form);
+      mass_form = new ParBilinearForm(&fespace);
+      auto *blfi = new MassIntegrator();
+      mass_form->AddDomainIntegrator(blfi);
+      mass_form->Assemble();
+      mass_form->Finalize();
+
+      Hess = mass_form->ParallelAssemble();
+   }
+   
    virtual void CalcConstraintGrad(const int constNumber, const Vector &x, Vector &grad) const
    {
       ParGridFunction x_interpolated(&fespace); 
