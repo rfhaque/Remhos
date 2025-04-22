@@ -82,10 +82,7 @@ public:
       if(subproblem)
       {
          x_interpolated = x_initial;
-         //x_interpolated.SetTrueVector();
-         //Vector & truexInterp = x_interpolated.GetTrueVector();
          x_interpolated.SetSubVector(optProbInd,x);
-         //x_interpolated.SetFromTrueVector();
       }
       else
       {
@@ -193,10 +190,7 @@ public:
       if(subproblem)
       {
          x_interpolated = x_initial;
-         //x_interpolated.SetTrueVector();
-         //Vector & truexInterp = x_interpolated.GetTrueVector();
          x_interpolated.SetSubVector(optProbInd,x);
-         //x_interpolated.SetFromTrueVector();
       }
       else
       {
@@ -237,10 +231,7 @@ public:
       if(subproblem)
       {
          x_interpolated = x_initial;
-         //x_interpolated.SetTrueVector();
-         //Vector & truexInterp = x_interpolated.GetTrueVector();
-         x_interpolated.SetSubVector(optProbInd,x);
-         //x_interpolated.SetFromTrueVector();
+         x_interpolated.SetSubVector(optProbInd,x);;
       }
       else
       {
@@ -549,6 +540,7 @@ private:
    QuadratureSpace & qspace_;
    ParFiniteElementSpace & fespace_;
    const Vector & designVar;
+   const int    numDesVar_;
    Vector d_lo, d_hi, massvec;
 
    double targetVol;
@@ -565,6 +557,9 @@ private:
    real_t w_1 = 1e4;
    real_t w_2 = 1e4;
    real_t w_3 = 1e1;
+
+   mfem::Array<int> optProbInd;
+   bool subproblem = false;
 
 class EnergyGradIntegrator : public mfem::LinearFormIntegrator {
 public:
@@ -585,6 +580,7 @@ public:
                             const ParGridFunction & pos_final_,
                             const Vector          & u_initial,
                             const Vector          & design_Var,
+                            const int             & numDesVar,
                             const Vector          & xmin, 
                             const Vector          & xmax, 
                             const double          & initalvol,
@@ -592,12 +588,14 @@ public:
                             const double          & initalenergy,
                             const int             & numConstraints_,
                             const bool            & use_H1_semi,
-                            const bool            & isL2 = true)
-      : OptimizationProblem(design_Var.Size(), NULL, NULL),
-        x_initial(u_initial), pos_final(pos_final_), qspace_(qspace), fespace_(fespace), designVar(design_Var),
+                            const mfem::Array<int> & optProbInd_,
+                            const bool            & isL2 = true,
+                            const bool            & sub =false)
+      : OptimizationProblem(numDesVar, NULL, NULL),
+        x_initial(u_initial), pos_final(pos_final_), qspace_(qspace), fespace_(fespace), designVar(design_Var), numDesVar_(numDesVar),
         d_lo(numConstraints_), d_hi(numConstraints_), massvec(numConstraints_),
         targetVol(initalvol), targetMass(initalmass), targetEnergy(initalenergy), isL2_(isL2),
-        size_qf(qspace.GetSize()), size_gf(fespace.GetNDofs()), offset(4)
+        size_qf(qspace.GetSize()), size_gf(fespace.GetNDofs()), offset(4), optProbInd(optProbInd_), subproblem(sub)
    {
       numConstraints = numConstraints_;
       SetEqualityConstraint(massvec);
@@ -621,13 +619,25 @@ public:
 
 virtual double CalcObjective(const Vector &x) const
    {
+      Vector x_interpolated(offset[3]);  
+
+      if(subproblem)
+      {
+         x_interpolated = x_initial;
+         x_interpolated.SetSubVector(optProbInd,x);
+      }
+      else
+      {
+         x_interpolated = x;
+      }
+
+      QuadratureFunction ind(&qspace_, x_interpolated.GetData());
+      QuadratureFunction rho(&qspace_, x_interpolated.GetData() + size_qf);
+      ParGridFunction    energy  (&fespace_, x_interpolated.GetData() + 2*size_qf);
+   
       QuadratureFunction ind_0(&qspace_, x_initial.GetData());
       QuadratureFunction rho_0(&qspace_, x_initial.GetData() + size_qf);
       ParGridFunction    e_0  (&fespace_, x_initial.GetData() + 2*size_qf);
-
-      QuadratureFunction ind(&qspace_, x.GetData());
-      QuadratureFunction rho(&qspace_, x.GetData() + size_qf);
-      ParGridFunction    energy  (&fespace_, x.GetData() + 2*size_qf);
 
       QuadratureFunction ind_diff(&qspace_);
       QuadratureFunction roh_diff(&qspace_);
@@ -714,15 +724,27 @@ virtual double CalcObjective(const Vector &x) const
 
    virtual void CalcObjectiveGrad(const Vector &x, Vector &grad) const
    {
+      Vector x_interpolated(offset[3]);  
+
+      if(subproblem)
+      {
+         x_interpolated = x_initial;
+         x_interpolated.SetSubVector(optProbInd,x);
+      }
+      else
+      {
+         x_interpolated = x;
+      }
+
+      QuadratureFunction ind(&qspace_, x_interpolated.GetData());
+      QuadratureFunction rho(&qspace_, x_interpolated.GetData() + size_qf);
+      ParGridFunction    energy  (&fespace_, x_interpolated.GetData() + 2*size_qf);
+
       BlockVector ind_rho_e_grad(offset, Device::GetMemoryType());
 
       QuadratureFunction ind_0(&qspace_, x_initial.GetData());
       QuadratureFunction rho_0(&qspace_, x_initial.GetData() + size_qf);
       ParGridFunction    e_0  (&fespace_, x_initial.GetData() + 2*size_qf);
-
-      QuadratureFunction ind(&qspace_, x.GetData());
-      QuadratureFunction rho(&qspace_, x.GetData() + size_qf);
-      ParGridFunction    energy  (&fespace_, x.GetData() + 2*size_qf);
 
       QuadratureFunction ind_diff(&qspace_);
       QuadratureFunction roh_diff(&qspace_);
@@ -788,24 +810,42 @@ virtual double CalcObjective(const Vector &x) const
       roh_diff *= w_2;
       e_grad   *= w_3;
 
-
       ind_rho_e_grad.GetBlock(0) = ind_diff;
       ind_rho_e_grad.GetBlock(1) = roh_diff;
       ind_rho_e_grad.GetBlock(2) = e_grad;
 
-      grad = ind_rho_e_grad;
+      if(subproblem)
+      {
+         ind_rho_e_grad.GetSubVector(optProbInd,grad);
+      }
+      else
+      {
+         grad = ind_rho_e_grad;
+      } 
    }
 
 virtual void CalcConstraintGrad(const int constNumber, const Vector &x, Vector &grad) const
    {
+      Vector x_interpolated(offset[3]);  
+
+      if(subproblem)
+      {
+         x_interpolated = x_initial;
+         x_interpolated.SetSubVector(optProbInd,x);
+      }
+      else
+      {
+         x_interpolated = x;
+      }
+
+      QuadratureFunction ind(&qspace_, x_interpolated.GetData());
+      QuadratureFunction rho(&qspace_, x_interpolated.GetData() + size_qf);
+      ParGridFunction    energy  (&fespace_, x_interpolated.GetData() + 2*size_qf);
+
       BlockVector ind_rho_e_grad(offset, Device::GetMemoryType());
       QuadratureFunction ind_grad(&qspace_); ind_grad= 0.0;
       QuadratureFunction rho_grad(&qspace_); rho_grad= 0.0;
       ParGridFunction    e_grad(&fespace_);  e_grad= 0.0;
-
-      QuadratureFunction ind(&qspace_, x.GetData());
-      QuadratureFunction rho(&qspace_, x.GetData() + size_qf);
-      ParGridFunction    energy(&fespace_, x.GetData() + 2*size_qf);
 
       grad = 0.0;
 
@@ -873,14 +913,33 @@ virtual void CalcConstraintGrad(const int constNumber, const Vector &x, Vector &
       ind_rho_e_grad.GetBlock(1) = rho_grad;
       ind_rho_e_grad.GetBlock(2) = e_grad;
 
-      grad = ind_rho_e_grad;
+      if(subproblem)
+      {
+         ind_rho_e_grad.GetSubVector(optProbInd,grad);
+      }
+      else
+      {
+         grad = ind_rho_e_grad;
+      } 
 };
 
 virtual void CalcConstraint(const int constNumber, const Vector &x, Vector &constVal) const
 {
-      QuadratureFunction ind   (&qspace_, x.GetData());
-      QuadratureFunction rho   (&qspace_, x.GetData() + size_qf);
-      ParGridFunction    energy(&fespace_, x.GetData() + 2*size_qf);
+      Vector x_interpolated(offset[3]);  
+
+      if(subproblem)
+      {
+         x_interpolated = x_initial;
+         x_interpolated.SetSubVector(optProbInd,x);
+      }
+      else
+      {
+         x_interpolated = x;
+      }
+
+      QuadratureFunction ind(&qspace_, x_interpolated.GetData());
+      QuadratureFunction rho(&qspace_, x_interpolated.GetData() + size_qf);
+      ParGridFunction    energy  (&fespace_, x_interpolated.GetData() + 2*size_qf);
 
       if( constNumber == 0)
       {

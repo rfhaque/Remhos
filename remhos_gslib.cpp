@@ -760,13 +760,46 @@ void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
       y_out = initial_design;
       ind_rho_e = initial_design;
 
+      int NumDesVar = ind_rho_e.Size();
+      mfem::Array<int> optProbInd;
+      mfem::Vector ind_rho_e_sub;
+      mfem::Vector y_out_sub;
+      mfem::Vector minsub;
+      mfem::Vector maxsub;
+
+      mfem::Vector x_maxsub(NumDesVar);
+      mfem::Vector x_minsub(NumDesVar); 
+
+      if(subprob)
+      {
+         NumDesVar = GetSizeOptimizationSubset(x_min,x_max);
+         GetOptimizationSubsetInd(x_min,x_max,optProbInd);
+         ind_rho_e.GetSubVector(optProbInd,ind_rho_e_sub);
+         y_out.GetSubVector(optProbInd,y_out_sub);
+
+         x_min.GetSubVector(optProbInd,minsub);
+         x_max.GetSubVector(optProbInd,maxsub);
+
+         x_maxsub.SetSize(NumDesVar);
+         x_minsub.SetSize(NumDesVar);
+         x_maxsub= maxsub;
+         x_minsub= minsub;
+
+      }   
+      else{
+         x_maxsub= x_max;
+         x_minsub= x_min;
+      }
+
+
       RemhosIndRhoEHiOpProblem ot_prob(*qspace, *pfes_e,
                                        pos_final,
                                        initial_design,
                                        ind_rho_e,
-                                       x_min, x_max,
+                                       NumDesVar,
+                                       x_minsub, x_maxsub,
                                        volume_0, mass_0, energy_0,
-                                       3, false, true);
+                                       3, false, optProbInd, true, subprob);
 
       optsolver->SetOptimizationProblem(ot_prob);
 
@@ -774,7 +807,15 @@ void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
       optsolver->SetAbsTol(1e-7);
       optsolver->SetRelTol(1e-7);
       optsolver->SetPrintLevel(3);
-      optsolver->Mult(ind_rho_e, y_out);
+
+      if(subprob)
+      {
+         optsolver->Mult(ind_rho_e_sub, y_out_sub);
+         y_out.SetSubVector(optProbInd,y_out_sub);
+      }
+      else{
+         optsolver->Mult(ind_rho_e, y_out);
+      }
 
       ind_rho_e = y_out;
 
