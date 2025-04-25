@@ -167,12 +167,14 @@ public:
       } 
    }
 
-   virtual void CalcObjectiveHessian( HypreParMatrix * Hess) const override
+   virtual void CalcObjectiveM(  std::vector<mfem::Vector> & diagMass, std::vector<HypreParMatrix *> & M_) const override
    {
       if(subproblem)
       {
          mfem_error("CalcObjectiveHessian not implemented for subproblem option");
       }
+
+      M_.resize(1);
 
       delete(mass_form);
       mass_form = new ParBilinearForm(&fespace);
@@ -181,7 +183,7 @@ public:
       mass_form->Assemble();
       mass_form->Finalize();
 
-      Hess = mass_form->ParallelAssemble();
+      M_[0] = mass_form->ParallelAssemble();
    }
    
    virtual void CalcConstraintGrad(const int constNumber, const Vector &x, Vector &grad) const
@@ -561,6 +563,8 @@ private:
    mfem::Array<int> optProbInd;
    bool subproblem = false;
 
+   mutable ParBilinearForm * mass_form =nullptr;
+
 class EnergyGradIntegrator : public mfem::LinearFormIntegrator {
 public:
   EnergyGradIntegrator(const mfem::QuadratureFunction &ind, const mfem::QuadratureFunction &rho);
@@ -822,6 +826,74 @@ virtual double CalcObjective(const Vector &x) const
       {
          grad = ind_rho_e_grad;
       } 
+   }
+
+virtual void CalcObjectiveM(  std::vector<mfem::Vector> & diagMass, std::vector<HypreParMatrix *> & M_) const override
+   {
+      if(subproblem)
+      {
+         mfem_error("CalcObjectiveHessian not implemented for subproblem option");
+      }
+
+      diagMass.resize(2);
+      M_.resize(1);
+
+      QuadratureFunction ind_w(&qspace_); ind_w = 1.0;
+      QuadratureFunction roh_w(&qspace_); roh_w = 1.0;
+      ParGridFunction    e_diff(&fespace_);
+
+      diagMass[0].SetSize(ind_w.Size());
+      diagMass[1].SetSize(ind_w.Size());
+      //------------------------------------------------------------------------
+
+      if(isL2_)
+      {
+         auto mesh = qspace_.GetMesh();
+         const int NE = mesh->GetNE();
+
+         Array<int> offset(NE+1);
+         offset[0] = 0;
+
+         for (int e = 0; e < NE; e++)
+         {
+            const IntegrationRule &ir = qspace_.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
+
+            offset[e+1] = offset[e] + nqp;
+         }
+
+         for (int e = 0; e < NE; e++)
+         {
+            const int s_offset = offset[e];
+
+            IsoparametricTransformation Tr;
+            mesh->GetElementTransformation(e, pos_final, &Tr);
+
+            const IntegrationRule &ir = qspace_.GetElementIntRule(e);
+            const int nqp = ir.GetNPoints();
+
+            for (int q = 0; q < nqp; q++)
+            {
+               const IntegrationPoint &ip = ir.IntPoint(q);
+               Tr.SetIntPoint(&ip);
+               real_t w = Tr.Weight() * ip.weight;
+
+               ind_w[s_offset+q] *= w;
+               roh_w[s_offset+q] *= w;
+            }
+         }
+      }
+      diagMass[0] = ind_w;
+      diagMass[1] = roh_w;
+
+      delete(mass_form);
+      mass_form = new ParBilinearForm(&fespace_);
+      auto *blfi = new MassIntegrator();
+      mass_form->AddDomainIntegrator(blfi);
+      mass_form->Assemble();
+      mass_form->Finalize();
+
+      M_[0] = mass_form->ParallelAssemble();
    }
 
 virtual void CalcConstraintGrad(const int constNumber, const Vector &x, Vector &grad) const
