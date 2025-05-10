@@ -125,6 +125,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
    Vector u_final_min, u_final_max;
    CalcDOFBounds(u_initial, pfes_final, pos_final,
                  u_final_min, u_final_max, false);
+
    if (visualization)
    {
       ParGridFunction gf_min(u_initial), gf_max(u_initial);
@@ -184,21 +185,25 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       mfem::Vector u_interpolated_sub;
       mfem::Vector y_out_sub;
 
+      Vector u_final_min_copy, u_final_max_copy;
       mfem::Vector minsub;
       mfem::Vector maxsub;
 
+      u_final_min_copy = u_final_min;
+      u_final_max_copy = u_final_max;
+
       if(subprob)
       {
-         NumDesVar = GetSizeOptimizationSubset(u_final_min,u_final_max);
-         GetOptimizationSubsetInd(u_final_min,u_final_max,optProbInd);
+         NumDesVar = GetSizeOptimizationSubset(u_final_min_copy,u_final_max_copy);
+         GetOptimizationSubsetInd(u_final_min_copy,u_final_max_copy,optProbInd);
          u_interpolated.GetSubVector(optProbInd,u_interpolated_sub);
          y_out.GetSubVector(optProbInd,y_out_sub);
 
-         u_final_min.GetSubVector(optProbInd,minsub);
-         u_final_max.GetSubVector(optProbInd,maxsub);
+         u_final_min_copy.GetSubVector(optProbInd,minsub);
+         u_final_max_copy.GetSubVector(optProbInd,maxsub);
 
-         u_final_min.SetSize(NumDesVar); u_final_min= minsub;
-         u_final_max.SetSize(NumDesVar); u_final_max= maxsub;
+         u_final_min_copy.SetSize(NumDesVar); u_final_min_copy= minsub;
+         u_final_max_copy.SetSize(NumDesVar); u_final_max_copy= maxsub;
       }
 
       
@@ -206,7 +211,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       const int numContraints = 1;
       RemhosHiOpProblem ot_prob(pfes_final,
                                 u_interpolated_initial, NumDesVar,
-                                u_final_min, u_final_max,
+                                u_final_min_copy, u_final_max_copy,
                                 mass_0, numContraints, h1_seminorm, optProbInd, subprob);
       optsolver->SetOptimizationProblem(ot_prob);
 
