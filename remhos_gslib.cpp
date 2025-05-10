@@ -192,7 +192,7 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       u_final_min_copy = u_final_min;
       u_final_max_copy = u_final_max;
 
-      if(subprob)
+      if (subprob)
       {
          NumDesVar = GetSizeOptimizationSubset(u_final_min_copy,u_final_max_copy);
          GetOptimizationSubsetInd(u_final_min_copy,u_final_max_copy,optProbInd);
@@ -206,8 +206,6 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
          u_final_max_copy.SetSize(NumDesVar); u_final_max_copy= maxsub;
       }
 
-      
-
       const int numContraints = 1;
       RemhosHiOpProblem ot_prob(pfes_final,
                                 u_interpolated_initial, NumDesVar,
@@ -220,14 +218,12 @@ void InterpolationRemap::Remap(const ParGridFunction &u_initial,
       optsolver->SetRelTol(1e-7);
       optsolver->SetPrintLevel(3);
       
-      if(subprob)
+      if (subprob)
       {
          optsolver->Mult(u_interpolated_sub, y_out_sub);
          y_out.SetSubVector(optProbInd,y_out_sub);
       }
-      else{
-         optsolver->Mult(u_interpolated, y_out);
-      }
+      else { optsolver->Mult(u_interpolated, y_out); }
 
       // fix parallel. u_interpolated and y_out should be true vectors
       u_final = y_out;
@@ -550,8 +546,8 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
 #endif
       }
 
-      const double rtol = 1.e-7;
-      const double atol = 1.e-7;
+      const double rtol = 1.e-12;
+      const double atol = 0.0;
       Vector y_out(u.Size());
 
       const int numContraints = 1;
@@ -581,6 +577,28 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
       md.Optimize(100, 1000, max_iter);
       md.SetFinal(u);
    }
+   else if (opt_type == 4)
+   {
+      ParGridFunction u_interpolated(u);
+      Vector target_volume(1); target_volume[0] = mass;
+      ScalarLatentVolumeProjector projector(target_volume, pos_final,
+                                            *u.ParFESpace(), u);
+      ParGridFunction psi(u_interpolated);
+      Vector search_l({infinity()}), search_r({-infinity()}), lambda(1);
+      for (int i=0; i<u_interpolated.Size(); i++)
+      {
+         psi[i] = inv_sigmoid(psi[i], u_final_min[i], u_final_max[i]);
+         search_l[0] = std::min(search_l[0], psi[i]);
+         search_r[0] = std::max(search_r[0], psi[i]);
+      }
+      MPI_Allreduce(MPI_IN_PLACE, &search_l[0], 1, MFEM_MPI_REAL_T, MPI_MIN,
+                    pmesh_init.GetComm());
+      MPI_Allreduce(MPI_IN_PLACE, &search_r[0], 1, MFEM_MPI_REAL_T, MPI_MAX,
+                    pmesh_init.GetComm());
+      projector.SetVerbose(2);
+      projector.Apply(psi, u_final_min, u_final_max, 1.0, search_l, search_r,
+                      lambda, max_iter);
+   }
 
    // Report masses.
    mass_f = Mass(pos_final, u);
@@ -592,6 +610,10 @@ void InterpolationRemap::Remap(std::function<real_t(const Vector &)> func,
                 << "Mass optimized diff %:    "
                 << fabs(mass - mass_f) / mass * 100 << endl;
    }
+
+   // Check for bounds violations.
+   if (Mpi::Root()) { std::cout << "-------\nBounds violations: \n"; }
+   CheckBounds(pmesh_init.GetMyRank(), u, u_final_min, u_final_max);
 }
 
 void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,

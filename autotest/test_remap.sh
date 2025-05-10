@@ -22,6 +22,7 @@ rm -f $file
 
 for method in "${methods[@]}"; do
 
+  echo -e "--- Method "$method
   echo -e '\n'"--- Method "$method >> $file
 
   echo -e '\n'"- 2D scalar pacman GridFunction" >> $file
