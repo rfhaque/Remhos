@@ -846,6 +846,14 @@ void InterpolationRemap::RemapIndRhoE(const Vector &ind_rho_e_0,
 
       ind_rho_e = y_out;
 
+      QuadratureFunction ind_temp(qspace, ind_rho_e.GetData());
+      QuadratureFunction rho_temp(qspace, ind_rho_e.GetData() + size_qf);
+      ParGridFunction    energy_temp(pfes_e, ind_rho_e.GetData() + 2*size_qf);
+
+      ind = ind_temp;
+      rho = rho_temp;
+      e   = energy_temp;
+
       delete optsolver;
    }
    else if (opt_type == 4)

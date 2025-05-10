@@ -556,8 +556,8 @@ private:
 
    Array<int> offset;
 
-   real_t w_1 = 1e4;
-   real_t w_2 = 1e4;
+   real_t w_1 = 1e1;
+   real_t w_2 = 1e1;
    real_t w_3 = 1e1;
 
    mfem::Array<int> optProbInd;
