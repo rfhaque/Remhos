@@ -43,6 +43,11 @@
 #include "fem/qinterp/grad.hpp"
 #include "fem/integ/bilininteg_mass_kernels.hpp"
 
+#if (defined(HYPRE_USING_UMPIRE) || defined(MFEM_USE_UMPIRE)) && (defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP))
+#define REMHOS_USE_DEVICE_UMPIRE
+#include <umpire/Umpire.hpp>
+#include <umpire/strategy/QuickPool.hpp>
+
 #ifdef USE_CALIPER
 #include <caliper/cali.h>
 #include <caliper/cali-manager.h>
@@ -295,6 +300,22 @@ MFEM_EXPORT int remhos(int argc, char *argv[], double &final_mass_u)
    }
    if (myid == 0) { args.PrintOptions(cout); }
 
+#ifdef REMHOS_USE_DEVICE_UMPIRE
+   auto &rm = umpire::ResourceManager::getInstance();
+   const char * allocator_name = "remhos_device_alloc";
+   rm.makeAllocator<umpire::strategy::QuickPool>(allocator_name, rm.getAllocator("DEVICE"));
+
+#ifdef HYPRE_USING_UMPIRE
+   HYPRE_SetUmpireDevicePoolName(allocator_name);
+#endif // HYPRE_USING_UMPIRE
+
+#ifdef MFEM_USE_UMPIRE
+   MemoryManager::SetUmpireDeviceAllocatorName(allocator_name);
+   // the umpire host memory type is slow compared to the native host memory type
+   Device::SetMemoryTypes(MemoryType::HOST, MemoryType::DEVICE_UMPIRE);
+#endif // MFEM_USING_UMPIRE
+#endif // REMHOS_USE_DEVICE_UMPIRE
+
 //setup caliper config manager
 #ifdef USE_CALIPER
    setupCaliper();
@@ -318,6 +339,7 @@ MFEM_EXPORT int remhos(int argc, char *argv[], double &final_mass_u)
    // CUDA, OCCA, RAJA and OpenMP based on command line options.
    Device device(device_config);
    if (myid == 0) { device.Print(); }
+   device.SetGPUAwareMPI(gpu_aware_mpi);
 
    if (myid == 0) { KernelReporter::Enable(); }
    using TENS = QuadratureInterpolator::TensorEvalKernels;
