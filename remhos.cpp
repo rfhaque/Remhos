@@ -207,6 +207,7 @@ MFEM_EXPORT int remhos(int argc, char *argv[], double &final_mass_u)
    bool product_sync = false;
    int vis_steps = 100;
    const char *device_config = "cpu";
+   bool gpu_aware_mpi = false;
 
    int precision = 8;
    cout.precision(precision);
@@ -262,6 +263,8 @@ MFEM_EXPORT int remhos(int argc, char *argv[], double &final_mass_u)
                   "Enable or disable next gen full assembly for the HO solution.");
    args.AddOption(&device_config, "-d", "--device",
                   "Device configuration string, see Device::Configure().");
+   args.AddOption(&gpu_aware_mpi, "-gam", "--gpu-aware-mpi", "-no-gam",
+                  "--no-gpu-aware-mpi", "Enable GPU aware MPI communications.");
    args.AddOption(&smth_ind_type, "-si", "--smth_ind",
                   "Smoothness indicator: 0 - no smoothness indicator,\n\t"
                   "                      1 - approx_quadratic,\n\t"
