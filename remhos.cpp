@@ -1170,8 +1170,20 @@ MFEM_EXPORT int remhos(int argc, char *argv[], double &final_mass_u)
       }
 #endif
 
+#ifdef REMHOS_USE_CALIPER
+   CALI_MARK_BEGIN("SoldS");
+#endif
       Sold = S;
+#ifdef REMHOS_USE_CALIPER
+   CALI_MARK_END("SoldS");
+#endif
+#ifdef REMHOS_USE_CALIPER
+   CALI_MARK_BEGIN("ODE_Step");
+#endif
       ode_solver->Step(S, t, dt_real);
+#ifdef REMHOS_USE_CALIPER
+   CALI_MARK_END("ODE_Step");
+#endif
       ti++;
       ti_total++;
 
@@ -1188,7 +1200,13 @@ MFEM_EXPORT int remhos(int argc, char *argv[], double &final_mass_u)
             }
             ti--;
             t -= dt_real;
+#ifdef REMHOS_USE_CALIPER
+   CALI_MARK_BEGIN("SSold");
+#endif
             S  = Sold;
+#ifdef REMHOS_USE_CALIPER
+   CALI_MARK_END("SSold");
+#endif
             dt = 0.85 * dt;
             if (dt < 1e-12) { MFEM_ABORT("The time step crashed!"); }
             continue;
